@@ -138,6 +138,13 @@
 #include <assert.h>
 #include <string.h> // memset()
 #include <stdlib.h> // abs()
+#include <stdio.h>  // fprintf, printf
+
+// API support (optional, enabled via PACMAN_API_ENABLED define)
+#ifdef PACMAN_API_ENABLED
+    #include "api/api_server.h"
+    #include "api/api_game.h"
+#endif
 
 // config defines and global constants
 #define AUDIO_VOLUME (0.5f)
@@ -426,6 +433,18 @@ static struct {
         int32_t tick_accum;     // helper variable to decouple ticks from frame rate
     } timing;
 
+    // API mode control
+    struct {
+        bool enabled;           // true when running in API mode
+        bool step_ready;        // true when a step has been requested
+#ifdef PACMAN_API_ENABLED
+        api_direction_t direction; // current direction for this step
+#else
+        int direction;          // placeholder when API disabled
+#endif
+        char port[16];          // API server port
+    } api;
+
     // intro state
     struct {
         trigger_t started;      // tick when intro-state was started
@@ -713,7 +732,32 @@ static const uint8_t rom_wavetable[256];
 
 /*== APPLICATION ENTRY AND CALLBACKS =========================================*/
 sapp_desc sokol_main(int argc, char* argv[]) {
-    (void)argc; (void)argv;
+    // Parse command line arguments for --api flag
+    bool api_mode = false;
+    const char* api_port = "8080";
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--api") == 0) {
+            api_mode = true;
+        } else if (strncmp(argv[i], "--port=", 7) == 0) {
+            api_port = argv[i] + 7;
+        }
+    }
+
+#ifdef PACMAN_API_ENABLED
+    state.api.enabled = api_mode;
+    if (api_mode) {
+        api_game_set_enabled(true);
+        strncpy(state.api.port, api_port, sizeof(state.api.port) - 1);
+        state.api.port[sizeof(state.api.port) - 1] = '\0';
+        fprintf(stderr, "Pacman API mode enabled on port %s\n", api_port);
+    }
+#else
+    if (api_mode) {
+        fprintf(stderr, "Error: API mode requested but not compiled with PACMAN_API_ENABLED\n");
+    }
+#endif
+
     return (sapp_desc) {
         .init_cb = init,
         .frame_cb = frame,
@@ -731,53 +775,112 @@ static void init(void) {
     gfx_init();
     snd_init();
 
-    // start into intro screen
-    #if DBG_SKIP_INTRO
-        start(&state.game.started);
-    #else
-        start(&state.intro.started);
-    #endif
+#ifdef PACMAN_API_ENABLED
+    // Initialize API server if in API mode
+    if (state.api.enabled) {
+        if (!api_server_init(state.api.port)) {
+            fprintf(stderr, "ERROR: Failed to initialize API server on port %s\n", state.api.port);
+        }
+        api_game_init();
+        // Don't auto-start in API mode - wait for /api/start
+        state.api.step_ready = false;
+        state.api.direction = API_DIR_NONE;
+    } else {
+#endif
+        // start into intro screen (normal mode)
+        #if DBG_SKIP_INTRO
+            start(&state.game.started);
+        #else
+            start(&state.intro.started);
+        #endif
+#ifdef PACMAN_API_ENABLED
+    }
+#endif
 }
 
 static void frame(void) {
 
-    // run the game at a fixed tick rate regardless of frame rate
-    uint32_t frame_time_ns = (uint32_t) (sapp_frame_duration() * 1000000000.0);
-    // clamp max frame time (so the timing isn't messed up when stopping in the debugger)
-    if (frame_time_ns > 33333333) {
-        frame_time_ns = 33333333;
+#ifdef PACMAN_API_ENABLED
+    // Poll API server if in API mode
+    if (state.api.enabled) {
+        api_server_poll(0);
     }
-    state.timing.tick_accum += frame_time_ns;
-    while (state.timing.tick_accum > -TICK_TOLERANCE_NS) {
-        state.timing.tick_accum -= TICK_DURATION_NS;
-        state.timing.tick++;
+#endif
 
-        // call per-tick sound function (updates sound 'registers' with current sound effect values)
-        snd_tick();
-
-        // check for game state change
-        if (now(state.intro.started)) {
-            state.gamestate = GAMESTATE_INTRO;
-        }
-        if (now(state.game.started)) {
-            state.gamestate = GAMESTATE_GAME;
-        }
-
-        // call the top-level game state update function
-        switch (state.gamestate) {
-            case GAMESTATE_INTRO:
-                intro_tick();
-                break;
-            case GAMESTATE_GAME:
-                game_tick();
-                break;
-        }
+    // In API mode, only tick when a step is requested
+    bool should_tick = true;
+#ifdef PACMAN_API_ENABLED
+    if (state.api.enabled) {
+        should_tick = state.api.step_ready;
     }
+#endif
+
+    if (should_tick) {
+        // run the game at a fixed tick rate regardless of frame rate
+        uint32_t frame_time_ns = (uint32_t) (sapp_frame_duration() * 1000000000.0);
+        // clamp max frame time (so the timing isn't messed up when stopping in the debugger)
+        if (frame_time_ns > 33333333) {
+            frame_time_ns = 33333333;
+        }
+
+#ifdef PACMAN_API_ENABLED
+        // In API mode, execute exactly one tick per step
+        if (state.api.enabled) {
+            state.timing.tick_accum = TICK_DURATION_NS;
+            state.api.step_ready = false;
+        } else {
+#endif
+            state.timing.tick_accum += frame_time_ns;
+#ifdef PACMAN_API_ENABLED
+        }
+#endif
+
+        while (state.timing.tick_accum > -TICK_TOLERANCE_NS) {
+            state.timing.tick_accum -= TICK_DURATION_NS;
+            state.timing.tick++;
+
+            // call per-tick sound function (updates sound 'registers' with current sound effect values)
+            snd_tick();
+
+            // check for game state change
+            if (now(state.intro.started)) {
+                state.gamestate = GAMESTATE_INTRO;
+            }
+            if (now(state.game.started)) {
+                state.gamestate = GAMESTATE_GAME;
+            }
+
+            // call the top-level game state update function
+            switch (state.gamestate) {
+                case GAMESTATE_INTRO:
+                    intro_tick();
+                    break;
+                case GAMESTATE_GAME:
+                    game_tick();
+                    break;
+            }
+
+#ifdef PACMAN_API_ENABLED
+            // In API mode, only do one tick per step
+            if (state.api.enabled) {
+                break;
+            }
+#endif
+        }
+        snd_frame(frame_time_ns);
+    }
+
     gfx_draw();
-    snd_frame(frame_time_ns);
 }
 
 static void input(const sapp_event* ev) {
+#ifdef PACMAN_API_ENABLED
+    // Disable keyboard input in API mode
+    if (state.api.enabled) {
+        return;
+    }
+#endif
+
     if (state.input.enabled) {
         if ((ev->type == SAPP_EVENTTYPE_KEY_DOWN) || (ev->type == SAPP_EVENTTYPE_KEY_UP)) {
             bool btn_down = ev->type == SAPP_EVENTTYPE_KEY_DOWN;
@@ -815,6 +918,11 @@ static void input(const sapp_event* ev) {
 }
 
 static void cleanup(void) {
+#ifdef PACMAN_API_ENABLED
+    if (state.api.enabled) {
+        api_server_shutdown();
+    }
+#endif
     snd_shutdown();
     gfx_shutdown();
 }
@@ -924,6 +1032,25 @@ static void input_enable(void) {
 
 // get the current input as dir_t
 static dir_t input_dir(dir_t default_dir) {
+#ifdef PACMAN_API_ENABLED
+    // In API mode, use the direction from the API
+    if (state.api.enabled) {
+        switch (state.api.direction) {
+            case API_DIR_UP:
+                return DIR_UP;
+            case API_DIR_DOWN:
+                return DIR_DOWN;
+            case API_DIR_LEFT:
+                return DIR_LEFT;
+            case API_DIR_RIGHT:
+                return DIR_RIGHT;
+            case API_DIR_NONE:
+            default:
+                return default_dir;
+        }
+    }
+#endif
+
     if (state.input.up) {
         return DIR_UP;
     }
@@ -2320,6 +2447,314 @@ static void game_tick(void) {
 }
 
 /*== INTRO GAMESTATE CODE ====================================================*/
+
+
+#ifdef PACMAN_API_ENABLED
+// API wrapper functions that have access to internal state
+
+void api_game_start_internal(void) {
+    // Initialize the game immediately, skipping intro animations
+    input_enable();
+    game_disable_timers();
+    state.game.round = DBG_START_ROUND;
+    state.game.freeze = 0;  // No freeze in API mode
+    state.game.num_lives = NUM_LIVES;
+    state.game.global_dot_counter_active = false;
+    state.game.global_dot_counter = 0;
+    state.game.num_dots_eaten = 0;
+    state.game.score = 0;
+
+    // Initialize display
+    vid_clear(TILE_SPACE, COLOR_DOT);
+    vid_color_text(i2(9,0), COLOR_DEFAULT, "HIGH SCORE");
+    game_init_playfield();
+
+    // Initialize round (sets up Pacman and ghost positions)
+    spr_clear();
+    state.game.active_fruit = FRUIT_NONE;
+    state.game.xorshift = 0x12345678;
+    state.game.num_ghosts_eaten = 0;
+
+    // Initialize Pacman position
+    state.game.pacman = (pacman_t) {
+        .actor = {
+            .dir = DIR_LEFT,
+            .pos = { 14*8, 26*8+4 },
+        },
+    };
+    state.gfx.sprite[SPRITE_PACMAN] = (sprite_t) { .enabled = true, .color = COLOR_PACMAN };
+
+    // Initialize Blinky
+    state.game.ghost[GHOSTTYPE_BLINKY] = (ghost_t) {
+        .actor = {
+            .dir = DIR_LEFT,
+            .pos = ghost_starting_pos[GHOSTTYPE_BLINKY],
+        },
+        .type = GHOSTTYPE_BLINKY,
+        .next_dir = DIR_LEFT,
+        .state = GHOSTSTATE_SCATTER,
+        .frightened = disabled_timer(),
+        .eaten = disabled_timer(),
+        .dot_counter = 0,
+        .dot_limit = 0
+    };
+    state.gfx.sprite[SPRITE_BLINKY] = (sprite_t) { .enabled = true, .color = COLOR_BLINKY };
+
+    // Initialize Pinky
+    state.game.ghost[GHOSTTYPE_PINKY] = (ghost_t) {
+        .actor = {
+            .dir = DIR_DOWN,
+            .pos = ghost_starting_pos[GHOSTTYPE_PINKY],
+        },
+        .type = GHOSTTYPE_PINKY,
+        .next_dir = DIR_DOWN,
+        .state = GHOSTSTATE_HOUSE,
+        .frightened = disabled_timer(),
+        .eaten = disabled_timer(),
+        .dot_counter = 0,
+        .dot_limit = 0
+    };
+    state.gfx.sprite[SPRITE_PINKY] = (sprite_t) { .enabled = true, .color = COLOR_PINKY };
+
+    // Initialize Inky
+    state.game.ghost[GHOSTTYPE_INKY] = (ghost_t) {
+        .actor = {
+            .dir = DIR_UP,
+            .pos = ghost_starting_pos[GHOSTTYPE_INKY],
+        },
+        .type = GHOSTTYPE_INKY,
+        .next_dir = DIR_UP,
+        .state = GHOSTSTATE_HOUSE,
+        .frightened = disabled_timer(),
+        .eaten = disabled_timer(),
+        .dot_counter = 0,
+        .dot_limit = 30
+    };
+    state.gfx.sprite[SPRITE_INKY] = (sprite_t) { .enabled = true, .color = COLOR_INKY };
+
+    // Initialize Clyde
+    state.game.ghost[GHOSTTYPE_CLYDE] = (ghost_t) {
+        .actor = {
+            .dir = DIR_UP,
+            .pos = ghost_starting_pos[GHOSTTYPE_CLYDE],
+        },
+        .type = GHOSTTYPE_CLYDE,
+        .next_dir = DIR_UP,
+        .state = GHOSTSTATE_HOUSE,
+        .frightened = disabled_timer(),
+        .eaten = disabled_timer(),
+        .dot_counter = 0,
+        .dot_limit = 60
+    };
+    state.gfx.sprite[SPRITE_CLYDE] = (sprite_t) { .enabled = true, .color = COLOR_CLYDE };
+
+    // Set game state and timers
+    state.gamestate = GAMESTATE_GAME;
+    // In API mode, mark these as already happened (set to tick 0)
+    state.game.started.tick = 0;
+    state.game.ready_started.tick = 0;
+    state.game.round_started.tick = 0;
+    start(&state.game.force_leave_house);
+
+    // Clear fade effect so graphics are immediately visible
+    state.gfx.fade = 0;
+    state.gfx.fadein.tick = DISABLED_TICKS;
+    state.gfx.fadeout.tick = DISABLED_TICKS;
+
+    // Update sprites to show initial positions
+    game_update_sprites();
+
+    // Clear sounds for API mode
+    snd_clear();
+}
+
+void api_game_restart_internal(void) {
+    // Fully reset the game state just like starting fresh
+    // This is essentially the same as api_game_start_internal but resets score/lives
+
+    input_enable();
+    game_disable_timers();
+    state.game.round = 0;  // Start from round 0
+    state.game.freeze = 0;
+    state.game.num_lives = NUM_LIVES;
+    state.game.global_dot_counter_active = false;
+    state.game.global_dot_counter = 0;
+    state.game.num_dots_eaten = 0;
+    state.game.score = 0;  // Reset score
+
+    // Initialize display
+    vid_clear(TILE_SPACE, COLOR_DOT);
+    vid_color_text(i2(9,0), COLOR_DEFAULT, "HIGH SCORE");
+    game_init_playfield();
+
+    // Initialize round
+    spr_clear();
+    state.game.active_fruit = FRUIT_NONE;
+    state.game.xorshift = 0x12345678;
+    state.game.num_ghosts_eaten = 0;
+
+    // Reset Pacman to starting position
+    state.game.pacman = (pacman_t) {
+        .actor = {
+            .dir = DIR_LEFT,
+            .pos = { 14*8, 26*8+4 },
+        },
+    };
+    state.gfx.sprite[SPRITE_PACMAN] = (sprite_t) { .enabled = true, .color = COLOR_PACMAN };
+
+    // Reset Blinky
+    state.game.ghost[GHOSTTYPE_BLINKY] = (ghost_t) {
+        .actor = {
+            .dir = DIR_LEFT,
+            .pos = ghost_starting_pos[GHOSTTYPE_BLINKY],
+        },
+        .type = GHOSTTYPE_BLINKY,
+        .next_dir = DIR_LEFT,
+        .state = GHOSTSTATE_SCATTER,
+        .frightened = disabled_timer(),
+        .eaten = disabled_timer(),
+        .dot_counter = 0,
+        .dot_limit = 0
+    };
+    state.gfx.sprite[SPRITE_BLINKY] = (sprite_t) { .enabled = true, .color = COLOR_BLINKY };
+
+    // Reset Pinky
+    state.game.ghost[GHOSTTYPE_PINKY] = (ghost_t) {
+        .actor = {
+            .dir = DIR_DOWN,
+            .pos = ghost_starting_pos[GHOSTTYPE_PINKY],
+        },
+        .type = GHOSTTYPE_PINKY,
+        .next_dir = DIR_DOWN,
+        .state = GHOSTSTATE_HOUSE,
+        .frightened = disabled_timer(),
+        .eaten = disabled_timer(),
+        .dot_counter = 0,
+        .dot_limit = 0
+    };
+    state.gfx.sprite[SPRITE_PINKY] = (sprite_t) { .enabled = true, .color = COLOR_PINKY };
+
+    // Reset Inky
+    state.game.ghost[GHOSTTYPE_INKY] = (ghost_t) {
+        .actor = {
+            .dir = DIR_UP,
+            .pos = ghost_starting_pos[GHOSTTYPE_INKY],
+        },
+        .type = GHOSTTYPE_INKY,
+        .next_dir = DIR_UP,
+        .state = GHOSTSTATE_HOUSE,
+        .frightened = disabled_timer(),
+        .eaten = disabled_timer(),
+        .dot_counter = 0,
+        .dot_limit = 30
+    };
+    state.gfx.sprite[SPRITE_INKY] = (sprite_t) { .enabled = true, .color = COLOR_INKY };
+
+    // Reset Clyde
+    state.game.ghost[GHOSTTYPE_CLYDE] = (ghost_t) {
+        .actor = {
+            .dir = DIR_UP,
+            .pos = ghost_starting_pos[GHOSTTYPE_CLYDE],
+        },
+        .type = GHOSTTYPE_CLYDE,
+        .next_dir = DIR_UP,
+        .state = GHOSTSTATE_HOUSE,
+        .frightened = disabled_timer(),
+        .eaten = disabled_timer(),
+        .dot_counter = 0,
+        .dot_limit = 60
+    };
+    state.gfx.sprite[SPRITE_CLYDE] = (sprite_t) { .enabled = true, .color = COLOR_CLYDE };
+
+    // Set game state and timers
+    state.gamestate = GAMESTATE_GAME;
+    state.game.started.tick = 0;
+    state.game.ready_started.tick = 0;
+    state.game.round_started.tick = 0;
+    start(&state.game.force_leave_house);
+
+    // Clear fade effect
+    state.gfx.fade = 0;
+    state.gfx.fadein.tick = DISABLED_TICKS;
+    state.gfx.fadeout.tick = DISABLED_TICKS;
+
+    // Update sprites
+    game_update_sprites();
+
+    // Clear sounds
+    snd_clear();
+}
+
+void api_game_step_internal(api_direction_t direction) {
+    state.api.direction = direction;
+    state.api.step_ready = true;
+}
+
+api_game_state_t api_game_get_state_internal(void) {
+    api_game_state_t result;
+    memset(&result, 0, sizeof(result));
+
+    // Pacman info
+    result.pacman.x = state.game.pacman.actor.pos.x;
+    result.pacman.y = state.game.pacman.actor.pos.y;
+    result.pacman.dir = (int)state.game.pacman.actor.dir;
+    // Check if Pacman is dead - either frozen in death state or was just eaten
+    result.pacman.alive = (state.game.freeze & FREEZETYPE_DEAD) == 0 &&
+                          !after(state.game.pacman_eaten, 0);
+    // Check if Pacman just died in this tick
+    result.pacman.just_died = now(state.game.pacman_eaten);
+
+    // Ghost info
+    for (int i = 0; i < 4; i++) {
+        result.ghosts[i].x = state.game.ghost[i].actor.pos.x;
+        result.ghosts[i].y = state.game.ghost[i].actor.pos.y;
+        result.ghosts[i].dir = (int)state.game.ghost[i].actor.dir;
+        result.ghosts[i].state = (int)state.game.ghost[i].state;
+        result.ghosts[i].type = (int)state.game.ghost[i].type;
+    }
+
+    // Fruit info
+    result.fruit.active = now(state.game.fruit_active) && !after(state.game.fruit_active, FRUITACTIVE_TICKS);
+    if (result.fruit.active) {
+        result.fruit.x = 13 * 8 + 4;
+        result.fruit.y = 20 * 8;
+        result.fruit.type = (int)state.game.active_fruit;
+    }
+
+    // Status info
+    result.status.score = state.game.score * 10;
+    result.status.hiscore = state.game.hiscore * 10;
+    result.status.lives = state.game.num_lives;
+    result.status.round = state.game.round;
+    result.status.dots_remaining = NUM_DOTS - state.game.num_dots_eaten;
+    result.status.game_over = now(state.game.game_over);
+    result.status.round_won = now(state.game.round_won);
+    result.status.started = now(state.game.started);
+
+    // Timing
+    result.tick = state.timing.tick;
+
+    return result;
+}
+
+// Implement the API functions by calling internal wrappers
+void api_game_start(void) {
+    api_game_start_internal();
+}
+
+void api_game_restart(void) {
+    api_game_restart_internal();
+}
+
+void api_game_step(api_direction_t direction) {
+    api_game_step_internal(direction);
+}
+
+api_game_state_t api_game_get_state(void) {
+    return api_game_get_state_internal();
+}
+
+#endif // PACMAN_API_ENABLED
 
 static void intro_tick(void) {
 

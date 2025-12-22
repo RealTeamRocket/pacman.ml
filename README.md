@@ -11,6 +11,22 @@ Related projects:
 
 - Zig version: https://github.com/floooh/pacman.zig
 
+## HTTP API for AI Training
+
+This fork includes an **optional HTTP API** that allows programmatic control of the game, perfect for AI training and automated gameplay.
+
+**Quick Start:**
+
+```bash
+# Initialize submodules (for Mongoose HTTP library)
+git submodule update --init --recursive
+
+cmake -B build -DPACMAN_ENABLE_API=ON  
+cmake --build build
+
+./build/pacman --api
+```
+
 ## Clone, Build and Run (Linux, macOS, Windows)
 
 On the command line:
