@@ -5,3 +5,7 @@ build/
 # nix
 result/
 .direnv/
+
+# python
+__pycache__/
+.env

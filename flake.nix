@@ -75,6 +75,10 @@
           # Add extra dev tools not needed for building
           nativeBuildInputs = with pkgs; [
             gdb
+
+            python3
+            poetry
+            python3Packages.pip
           ];
 
           shellHook = ''
