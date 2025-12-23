@@ -17,4 +17,7 @@ void api_server_poll(int timeout_ms);
 // Check if the server is running
 bool api_server_is_running(void);
 
+// Notify server that a game step has completed
+void api_server_on_step_complete(void);
+
 #endif // API_SERVER_H

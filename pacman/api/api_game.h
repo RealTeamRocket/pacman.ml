@@ -4,57 +4,63 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define API_MAP_WIDTH 28
+#define API_MAP_HEIGHT 36
+
 // Direction values for API control
 typedef enum {
-    API_DIR_NONE = 0,
-    API_DIR_UP,
-    API_DIR_DOWN,
-    API_DIR_LEFT,
-    API_DIR_RIGHT
+  API_DIR_NONE = 0,
+  API_DIR_UP,
+  API_DIR_DOWN,
+  API_DIR_LEFT,
+  API_DIR_RIGHT
 } api_direction_t;
 
 // Game state information exposed via API
 typedef struct {
-    // Pacman info
-    struct {
-        int x;
-        int y;
-        int dir;
-        bool alive;
-        bool just_died;  // true if Pacman died in this tick
-    } pacman;
-    
-    // Ghost info (4 ghosts)
-    struct {
-        int x;
-        int y;
-        int dir;
-        int state; // 0=scatter, 1=chase, 2=frightened, 3=eaten
-        int type;  // 0=blinky, 1=pinky, 2=inky, 3=clyde
-    } ghosts[4];
-    
-    // Fruit info
-    struct {
-        bool active;
-        int x;
-        int y;
-        int type;
-    } fruit;
-    
-    // Game status
-    struct {
-        uint32_t score;
-        uint32_t hiscore;
-        int lives;
-        int round;
-        int dots_remaining;
-        bool game_over;
-        bool round_won;
-        bool started;
-    } status;
-    
-    // Timing
-    uint32_t tick;
+  // Pacman info
+  struct {
+    int x;
+    int y;
+    int dir;
+    bool alive;
+    bool just_died; // true if Pacman died in this tick
+  } pacman;
+
+  // Ghost info (4 ghosts)
+  struct {
+    int x;
+    int y;
+    int dir;
+    int state; // 0=scatter, 1=chase, 2=frightened, 3=eaten
+    int type;  // 0=blinky, 1=pinky, 2=inky, 3=clyde
+  } ghosts[4];
+
+  // Fruit info
+  struct {
+    bool active;
+    int x;
+    int y;
+    int type;
+  } fruit;
+
+  // Game status
+  struct {
+    uint32_t score;
+    uint32_t hiscore;
+    int lives;
+    int round;
+    int dots_remaining;
+    bool game_over;
+    bool round_won;
+    bool started;
+  } status;
+
+  // Map data (tile codes)
+  uint8_t map[API_MAP_HEIGHT][API_MAP_WIDTH];
+
+  // Timing
+  uint32_t tick;
 } api_game_state_t;
 
 // Initialize API mode
