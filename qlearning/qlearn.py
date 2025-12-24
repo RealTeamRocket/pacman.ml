@@ -2,239 +2,289 @@ import numpy as np
 import pickle
 import os
 import random
+from collections import defaultdict
+import config
 
 class QLearningAgent:
-    def __init__(self, actions, alpha=0.01, gamma=0.8, epsilon=1.0, epsilon_decay=0.99, epsilon_min=0.01):
+    def __init__(self, actions, alpha=config.ALPHA, gamma=config.GAMMA, 
+                 epsilon=config.EPSILON_START, epsilon_decay=config.EPSILON_DECAY, 
+                 epsilon_min=config.EPSILON_MIN):
         self.actions = actions
         self.alpha = alpha
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
-        self.weights = {
-            'bias': 1.0,
-            'eats_food': 500.0,    # Massive reward for actually eating
-            'food_score': 200.0,   # Strong pull towards food
-            'ghost_proximity': -1000.0, # High penalty, but only when close (<5 tiles)
-            'lives': 0.0
-        }
+        
+        # Tabular Q-table: Q[state][action] = value
+        self.Q = defaultdict(lambda: {a: 0.0 for a in actions})
+        
+        self.states_visited = 0
+        self.updates_count = 0
+        
+        # Logging
+        self.last_state_key = None
+        self.last_q_values = {}
+        
+        print(f"[AGENT INIT] Alpha={alpha}, Gamma={gamma}, Epsilon={epsilon}")
     
-    def get_weights(self):
-        return self.weights
-
-    def get_features(self, state, action):
+    def get_state_key(self, state):
         """
-        Extract features for (state, action) pair.
-        State is assumed to be a dictionary with 'pacman', 'ghosts', 'map'.
+        Convert state to simple tuple for Q-table lookup.
         """
-        if not state: return {}
+        if not state:
+            return (0, 0, 0, 0, False)
         
-        features = {}
-        features['bias'] = 1.0
-        
+        # Extract pacman position (in tiles)
         pacman = state.get('pacman', {})
-        px, py = pacman.get('x', 0), pacman.get('y', 0)
-        tx, ty = px // 8, py // 8
+        px = pacman.get('x', 0) // 8
+        py = pacman.get('y', 0) // 8
         
-        # Calculate next position based on action
-        dx, dy = 0, 0
-        if action == 'up': dy = -1
-        elif action == 'down': dy = 1
-        elif action == 'left': dx = -1
-        elif action == 'right': dx = 1
-        
-        # Next tile
-        nx, ny = tx + dx, ty + dy
-        
-        game_map = state.get('map', [])
-        GRID_W = 28
-        GRID_H = 36
-        
-        # Check walls
-        is_wall = False
-        if not game_map:
-            is_wall = False
-        elif nx < 0 or nx >= GRID_W or ny < 0 or ny >= GRID_H:
-            is_wall = True
-        else:
-            tile = game_map[ny][nx]
-            # TILE_SPACE(64), TILE_DOT(16), TILE_PILL(20) are walkable
-            if tile not in (64, 16, 20):
-                is_wall = True
-                
-        if is_wall:
-            # Action hits a wall. Current pos logic applies but with penalty?
-            # Ideally we predict we stay in place
-            nx, ny = tx, ty
-            
-        features['stop'] = 1.0 if action == 'none' else 0.0
-
-        # Feature: Eats Food
-        eats_food = 0.0
-        if game_map and 0 <= nx < GRID_W and 0 <= ny < GRID_H:
-             if game_map[ny][nx] in (16, 20): # DOT or PILL
-                 eats_food = 1.0
-        features['eats_food'] = eats_food
-        
-        # Feature: Closest Food (Inverse Distance)
-        # BFS to find nearest food from (nx, ny)
-        min_dist = 999
-        if game_map:
-            queue = [(nx, ny, 0)]
-            visited = set([(nx, ny)])
-            found = False
-            
-            head = 0
-            while head < len(queue):
-                cx, cy, dist = queue[head]
-                head += 1
-                
-                # Limit depth
-                if dist > 30: break 
-                
-                if 0 <= cy < GRID_H and 0 <= cx < GRID_W:
-                    if game_map[cy][cx] in (16, 20):
-                        min_dist = dist
-                        found = True
-                        break
-                
-                # Neighbors
-                for ddx, ddy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
-                    mx, my = cx + ddx, cy + ddy
-                    if (mx, my) not in visited:
-                        # Check wall
-                        w = False
-                        if mx < 0 or mx >= GRID_W or my < 0 or my >= GRID_H: w = True
-                        elif game_map[my][mx] not in (64, 16, 20): w = True
-                        
-                        if not w:
-                            visited.add((mx, my))
-                            queue.append((mx, my, dist+1))
-                            
-        # Inverse distance: 1.0 is on top of food, 0.5 is 1 step away, etc.
-        features['food_score'] = 1.0 / (min_dist + 1.0)
-        
-        # Feature: Ghost Proximity (Inverse)
+        # Find nearest dangerous ghost
         ghosts = state.get('ghosts', [])
-        ghost_danger = 0.0
+        min_ghost_dist = 20  # Far away
+        ghost_dir = 4  # None
         
-        for g in ghosts:
-            if g.get('state') == 1: # Chasing
-                gx, gy = g.get('x', 0), g.get('y', 0)
-                gtx, gty = gx // 8, gy // 8
+        dangerous_ghost_count = 0
+        
+        for ghost in ghosts:
+            ghost_state = ghost.get('state', 0)
+            if ghost_state not in (2, 3):
+                dangerous_ghost_count += 1
+                gx = ghost.get('x', 0) // 8
+                gy = ghost.get('y', 0) // 8
                 
-                # Manhattan distance to next pos
-                dist = abs(gtx - nx) + abs(gty - ny)
+                dist = abs(gx - px) + abs(gy - py)
                 
-                if dist < 5:
-                    ghost_danger = max(ghost_danger, 1.0 / (dist + 0.1))
+                if dist < min_ghost_dist:
+                    min_ghost_dist = dist
                     
-        features['ghost_proximity'] = ghost_danger
+                    # Direction to ghost
+                    dx = gx - px
+                    dy = gy - py
+                    if abs(dx) > abs(dy):
+                        ghost_dir = 2 if dx < 0 else 3  # left:right
+                    else:
+                        ghost_dir = 0 if dy < 0 else 1  # up:down
         
-        return features
+        # Bucket ghost distance
+        if min_ghost_dist < 3:
+            ghost_dist_bucket = 0  # Very close
+        elif min_ghost_dist < 6:
+            ghost_dist_bucket = 1  # Close
+        elif min_ghost_dist < 12:
+            ghost_dist_bucket = 2  # Medium
+        else:
+            ghost_dist_bucket = 3  # Far
         
-        return features
-
-    def get_q_value(self, state, action):
-        features = self.get_features(state, action)
-        q_value = 0.0
-        for feature, value in features.items():
-            q_value += self.weights.get(feature, 0.0) * value
-        return q_value
-
+        # Check for nearby food
+        game_map = state.get('map', [])
+        food_nearby = False
+        
+        if game_map and 0 <= py < 36 and 0 <= px < 28:
+            # Check surrounding tiles
+            for dy in range(-2, 3):
+                for dx in range(-2, 3):
+                    cx, cy = px + dx, py + dy
+                    if 0 <= cy < 36 and 0 <= cx < 28:
+                        if game_map[cy][cx] in (16, 20):
+                            food_nearby = True
+                            break
+                if food_nearby:
+                    break
+        
+        # Discretize pacman position to reduce state space
+        px_bucket = px // 2  
+        py_bucket = py // 2 
+        
+        state_key = (px_bucket, py_bucket, ghost_dist_bucket, ghost_dir, food_nearby)
+        
+        # Log occasionally
+        if random.random() < 0.01:  # 1% of the time
+            print(f"[STATE] Pacman=({px},{py}→{px_bucket},{py_bucket}), "
+                  f"Ghost(dist={min_ghost_dist}→bucket{ghost_dist_bucket}, dir={ghost_dir}, count={dangerous_ghost_count}), "
+                  f"Food={food_nearby}")
+        
+        return state_key
+    
     def get_legal_actions(self, state):
-        if not state: return self.actions
+        """Get legal actions (no walls)"""
+        if not state:
+            return self.actions
         
         pacman = state.get('pacman', {})
-        px, py = pacman.get('x', 0), pacman.get('y', 0)
-        tx, ty = px // 8, py // 8
+        px = pacman.get('x', 0) // 8
+        py = pacman.get('y', 0) // 8
         
         game_map = state.get('map', [])
-        GRID_W = 28
-        GRID_H = 36
-        
         legal = []
-        for action in self.actions:
-            dx, dy = 0, 0
-            if action == 'up': dy = -1
-            elif action == 'down': dy = 1
-            elif action == 'left': dx = -1
-            elif action == 'right': dx = 1
+        
+        directions = {
+            'up': (0, -1),
+            'down': (0, 1),
+            'left': (-1, 0),
+            'right': (1, 0)
+        }
+        
+        for action, (dx, dy) in directions.items():
+            nx, ny = px + dx, py + dy
             
-            nx, ny = tx + dx, ty + dy
-            
-            # Check map bounds and walls
-            is_legal = True
-            if not game_map:
-                is_legal = True # Assume all reasonable if no map
-            elif nx < 0 or nx >= GRID_W or ny < 0 or ny >= GRID_H:
-                is_legal = False # Out of bounds
-            else:
-                tile = game_map[ny][nx]
-                # TILE_SPACE(64), TILE_DOT(16), TILE_PILL(20) are walkable
-                if tile not in (64, 16, 20):
-                    is_legal = False
-            
-            if is_legal:
-                legal.append(action)
-                
+            if game_map and 0 <= ny < 36 and 0 <= nx < 28:
+                if game_map[ny][nx] in (64, 16, 20):
+                    legal.append(action)
+        
         if not legal:
-            return self.actions # Fallback if stuck (shouldn't happen)
-            
+            print(f"[WARNING] No legal actions at ({px},{py})! Returning all.")
+            return self.actions
+        
         return legal
-
+    
     def get_action(self, state):
+        """Epsilon-greedy action selection"""
         legal_actions = self.get_legal_actions(state)
         
+        if not legal_actions:
+            print(f"[ERROR] No legal actions!")
+            return 'up'
+        
+        # Explore
         if np.random.rand() < self.epsilon:
-            return random.choice(legal_actions)
+            action = random.choice(legal_actions)
+            if random.random() < 0.01:
+                print(f"[ACTION] EXPLORING: chose {action} randomly")
+            return action
         
-        q_values = [(action, self.get_q_value(state, action)) for action in legal_actions]
+        # Exploit
+        state_key = self.get_state_key(state)
+        q_values = self.Q[state_key]
         
-        if not q_values: return random.choice(self.actions)
+        # Get best legal action
+        legal_q = {a: q_values[a] for a in legal_actions}
+        best_action = max(legal_q, key=legal_q.get)
         
-        max_q = max(q_values, key=lambda x: x[1])[1]
-        best_actions = [action for action, q in q_values if q == max_q]
-        return random.choice(best_actions)
-
+        # Log occasionally
+        if random.random() < 0.01:
+            print(f"[ACTION] EXPLOITING: Q-values={legal_q}, chose {best_action}")
+        
+        self.last_state_key = state_key
+        self.last_q_values = legal_q
+        
+        return best_action
+    
     def learn(self, state, action, reward, next_state):
-        features = self.get_features(state, action)
-        current_q = self.get_q_value(state, action)
+        """Q-learning update with adaptive learning rate for dangerous situations"""
+        state_key = self.get_state_key(state)
+        next_state_key = self.get_state_key(next_state)
         
-        # Max Q for next state (over legal actions only)
+        # Current Q-value
+        current_q = self.Q[state_key][action]
+        
+        # Max next Q-value
         legal_next = self.get_legal_actions(next_state)
-        next_q_values = [self.get_q_value(next_state, a) for a in legal_next]
-        next_max_q = max(next_q_values) if next_q_values else 0.0
+        if legal_next:
+            next_q_values = [self.Q[next_state_key][a] for a in legal_next]
+            max_next_q = max(next_q_values)
+        else:
+            max_next_q = 0.0
         
-        difference = (reward + self.gamma * next_max_q) - current_q
+        # Adaptive learning rate: learn faster from dangerous situations
+        # Use higher alpha for deaths and ghost proximity penalties
+        if reward < -50:  # Death or major penalty
+            alpha = min(0.4, self.alpha * 2.0)  # Double learning rate, capped at 0.4
+        elif reward > 50:  # Major reward (power pill, ghost eaten)
+            alpha = min(0.3, self.alpha * 1.5)  # 1.5x learning rate for good outcomes
+        else:
+            alpha = self.alpha  # Normal learning rate
+            
+            # Q-learning update
+        target_q = reward + self.gamma * max_next_q
+        new_q = current_q + alpha * (target_q - current_q)
+        self.Q[state_key][action] = new_q
         
-        # Update weights
-        for feature, value in features.items():
-            self.weights[feature] = self.weights.get(feature, 0.0) + self.alpha * difference * value
-
+        self.updates_count += 1
+        self.states_visited = len(self.Q)
+        
+        # Log significant updates
+        if abs(reward) > 50 or abs(new_q - current_q) > 10:
+            alpha_used = alpha if alpha != self.alpha else self.alpha
+            print(f"[LEARN] State={state_key}, Action={action}")
+            print(f"        Reward={reward:.1f}, Q: {current_q:.2f} → {new_q:.2f} (Δ={new_q-current_q:.2f})")
+            print(f"        Target={target_q:.2f}, MaxNextQ={max_next_q:.2f}, Alpha={alpha_used:.2f}")
+    
     def decay_epsilon(self):
+        old_epsilon = self.epsilon
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
-
+        
+        if old_epsilon != self.epsilon and random.random() < 0.1:
+            print(f"[EPSILON] Decayed: {old_epsilon:.3f} → {self.epsilon:.3f}")
+    
     def save(self, filename):
+        data = {
+            'Q': dict(self.Q),
+            'epsilon': self.epsilon,
+            'states_visited': self.states_visited,
+            'updates_count': self.updates_count
+        }
         with open(filename, 'wb') as f:
-            pickle.dump(self.weights, f)
-
+            pickle.dump(data, f)
+        print(f"[SAVE] Q-table saved: {len(self.Q)} states, {self.updates_count} updates")
+    
     def load(self, filename):
         if os.path.exists(filename):
             with open(filename, 'rb') as f:
-                # Need to handle if loading old q_table vs new weights
-                try:
-                    loaded = pickle.load(f)
-                    if isinstance(loaded, dict) and 'bias' in loaded:
-                        self.weights = loaded
-                    else:
-                        print("Old Q-table format detected, starting fresh.")
-                except:
-                    pass
-
+                data = pickle.load(f)
+                self.Q = defaultdict(lambda: {a: 0.0 for a in self.actions}, data['Q'])
+                self.epsilon = data.get('epsilon', self.epsilon)
+                self.states_visited = data.get('states_visited', 0)
+                self.updates_count = data.get('updates_count', 0)
+            print(f"[LOAD] Loaded Q-table: {len(self.Q)} states, {self.updates_count} updates, epsilon={self.epsilon:.3f}")
+    
     def map_state(self, api_state):
-        # Pass through the raw state or slightly processed
-        # We need the map for features
         return api_state
-
-
+    
+    def get_weights(self):
+        """For compatibility - return Q-table stats"""
+        # Sample some Q-values
+        sample_states = list(self.Q.keys())[:5]
+        sample_q = {}
+        for s in sample_states:
+            sample_q[s] = self.Q[s]
+        
+        return {
+            'states_explored': len(self.Q),
+            'updates_count': self.updates_count,
+            'epsilon': self.epsilon,
+            'sample_q_values': sample_q
+        }
+    
+    def print_stats(self):
+        """Print detailed statistics"""
+        print(f"\n{'='*60}")
+        print(f"Q-LEARNING AGENT STATISTICS")
+        print(f"{'='*60}")
+        print(f"States explored: {len(self.Q)}")
+        print(f"Total updates: {self.updates_count}")
+        print(f"Current epsilon: {self.epsilon:.3f}")
+        
+        if len(self.Q) > 0:
+            # Find states with highest/lowest Q-values
+            all_q_values = []
+            for state, actions in self.Q.items():
+                for action, q in actions.items():
+                    all_q_values.append((state, action, q))
+            
+            all_q_values.sort(key=lambda x: x[2], reverse=True)
+            
+            print(f"\nTop 5 Q-values:")
+            for i, (state, action, q) in enumerate(all_q_values[:5]):
+                print(f"  {i+1}. State={state}, Action={action}, Q={q:.2f}")
+            
+            print(f"\nBottom 5 Q-values:")
+            for i, (state, action, q) in enumerate(all_q_values[-5:]):
+                print(f"  {i+1}. State={state}, Action={action}, Q={q:.2f}")
+            
+            # Average Q-value
+            avg_q = sum(q for _, _, q in all_q_values) / len(all_q_values)
+            print(f"\nAverage Q-value: {avg_q:.2f}")
+        
+        print(f"{'='*60}\n")
