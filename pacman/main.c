@@ -465,7 +465,8 @@ static struct {
 #else
     int direction; // placeholder when API disabled
 #endif
-    char port[16]; // API server port
+    char port[16];   // API server port
+    int ghost_count; // Number of active ghosts
   } api;
 
   // intro state
@@ -827,12 +828,19 @@ sapp_desc sokol_main(int argc, char *argv[]) {
   // Parse command line arguments for --api flag
   bool api_mode = false;
   const char *api_port = "8080";
+  int ghost_count = 4;
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--api") == 0) {
       api_mode = true;
     } else if (strncmp(argv[i], "--port=", 7) == 0) {
       api_port = argv[i] + 7;
+    } else if (strncmp(argv[i], "--ghosts=", 9) == 0) {
+      ghost_count = atoi(argv[i] + 9);
+      if (ghost_count < 0)
+        ghost_count = 0;
+      if (ghost_count > NUM_GHOSTS)
+        ghost_count = NUM_GHOSTS;
     }
   }
 
@@ -842,7 +850,9 @@ sapp_desc sokol_main(int argc, char *argv[]) {
     api_game_set_enabled(true);
     strncpy(state.api.port, api_port, sizeof(state.api.port) - 1);
     state.api.port[sizeof(state.api.port) - 1] = '\0';
-    fprintf(stderr, "Pacman API mode enabled on port %s\n", api_port);
+    state.api.ghost_count = ghost_count;
+    fprintf(stderr, "Pacman API mode enabled on port %s with %d ghosts\n",
+            api_port, ghost_count);
   }
 #else
   if (api_mode) {
@@ -898,30 +908,30 @@ static void init(void) {
 }
 
 static void do_game_tick(void) {
-    state.timing.tick++;
+  state.timing.tick++;
 
-    // call per-tick sound function
-    if (!state.api.enabled) {
-        snd_tick();
-    }
+  // call per-tick sound function
+  if (!state.api.enabled) {
+    snd_tick();
+  }
 
-    // check for game state change
-    if (now(state.intro.started)) {
-        state.gamestate = GAMESTATE_INTRO;
-    }
-    if (now(state.game.started)) {
-        state.gamestate = GAMESTATE_GAME;
-    }
+  // check for game state change
+  if (now(state.intro.started)) {
+    state.gamestate = GAMESTATE_INTRO;
+  }
+  if (now(state.game.started)) {
+    state.gamestate = GAMESTATE_GAME;
+  }
 
-    // call the top-level game state update function
-    switch (state.gamestate) {
-    case GAMESTATE_INTRO:
-        intro_tick();
-        break;
-    case GAMESTATE_GAME:
-        game_tick();
-        break;
-    }
+  // call the top-level game state update function
+  switch (state.gamestate) {
+  case GAMESTATE_INTRO:
+    intro_tick();
+    break;
+  case GAMESTATE_GAME:
+    game_tick();
+    break;
+  }
 }
 
 static void frame(void) {
@@ -932,25 +942,26 @@ static void frame(void) {
     // We leave 1ms for rendering overhead
     struct timespec ts_start, ts_now;
     clock_gettime(CLOCK_MONOTONIC, &ts_start);
-    
-    while (1) {
-        clock_gettime(CLOCK_MONOTONIC, &ts_now);
-        double elapsed = (ts_now.tv_sec - ts_start.tv_sec) + 
-                        (ts_now.tv_nsec - ts_start.tv_nsec) / 1e9;
-        if (elapsed >= 0.015) break;
 
-        api_server_poll(0);
-        if (state.api.step_ready) {
-            do_game_tick();
-            api_server_on_step_complete();
-            state.api.step_ready = false;
-        }
+    while (1) {
+      clock_gettime(CLOCK_MONOTONIC, &ts_now);
+      double elapsed = (ts_now.tv_sec - ts_start.tv_sec) +
+                       (ts_now.tv_nsec - ts_start.tv_nsec) / 1e9;
+      if (elapsed >= 0.015)
+        break;
+
+      api_server_poll(0);
+      if (state.api.step_ready) {
+        do_game_tick();
+        api_server_on_step_complete();
+        state.api.step_ready = false;
+      }
     }
     // Perform standard frame logic mostly for audio/rendering timing
   } else {
-      // Standard polling for manual mode (if enabled?)
-      // Actually main loop only calls poll if state.api.enabled.
-      // So this block is for non-API mode.
+    // Standard polling for manual mode (if enabled?)
+    // Actually main loop only calls poll if state.api.enabled.
+    // So this block is for non-API mode.
   }
 #endif
 
@@ -958,22 +969,24 @@ static void frame(void) {
   // We skip this if API mode because we handled ticks above!
   bool run_standard_loop = true;
 #ifdef PACMAN_API_ENABLED
-  if (state.api.enabled) run_standard_loop = false;
+  if (state.api.enabled)
+    run_standard_loop = false;
 #endif
 
   if (run_standard_loop) {
-      uint32_t frame_time_ns = (uint32_t)(sapp_frame_duration() * 1000000000.0);
-      if (frame_time_ns > 33333333) frame_time_ns = 33333333;
-      state.timing.tick_accum += frame_time_ns;
-      
-      while (state.timing.tick_accum > -TICK_TOLERANCE_NS) {
-        state.timing.tick_accum -= TICK_DURATION_NS;
-        do_game_tick();
-      }
-      
-      if (!state.api.enabled) {
-         snd_frame(frame_time_ns);
-      }
+    uint32_t frame_time_ns = (uint32_t)(sapp_frame_duration() * 1000000000.0);
+    if (frame_time_ns > 33333333)
+      frame_time_ns = 33333333;
+    state.timing.tick_accum += frame_time_ns;
+
+    while (state.timing.tick_accum > -TICK_TOLERANCE_NS) {
+      state.timing.tick_accum -= TICK_DURATION_NS;
+      do_game_tick();
+    }
+
+    if (!state.api.enabled) {
+      snd_frame(frame_time_ns);
+    }
   }
 
   gfx_draw();
@@ -1730,6 +1743,23 @@ static void game_init(void) {
   vid_color_text(i2(11, 20), 0x9, "READY!");
 }
 
+static void game_reset_ghost_modes(void) {
+  for (int i = 0; i < NUM_GHOSTS; i++) {
+    ghost_t *ghost = &state.game.ghost[i];
+
+    // Reset to appropriate starting state
+    if (ghost->type == GHOSTTYPE_BLINKY) {
+      ghost->state = GHOSTSTATE_SCATTER; // Blinky starts outside in scatter
+    } else {
+      ghost->state = GHOSTSTATE_HOUSE; // Others start in house
+    }
+
+    // Disable frightened/eaten timers
+    ghost->frightened = disabled_timer();
+    ghost->eaten = disabled_timer();
+  }
+}
+
 // setup state at start of a game round
 static void game_round_init(void) {
   spr_clear();
@@ -1754,6 +1784,9 @@ static void game_round_init(void) {
       state.game.global_dot_counter_active = true;
       state.game.global_dot_counter = 0;
     }
+
+    game_reset_ghost_modes();
+
     state.game.num_lives--;
   }
   assert(state.game.num_lives >= 0);
@@ -2673,7 +2706,7 @@ void api_game_start_internal(void) {
                 .dot_counter = 0,
                 .dot_limit = 0};
   state.gfx.sprite[SPRITE_BLINKY] =
-      (sprite_t){.enabled = true, .color = COLOR_BLINKY};
+      (sprite_t){.enabled = (state.api.ghost_count > 0), .color = COLOR_BLINKY};
 
   // Initialize Pinky
   state.game.ghost[GHOSTTYPE_PINKY] =
@@ -2690,7 +2723,7 @@ void api_game_start_internal(void) {
                 .dot_counter = 0,
                 .dot_limit = 0};
   state.gfx.sprite[SPRITE_PINKY] =
-      (sprite_t){.enabled = true, .color = COLOR_PINKY};
+      (sprite_t){.enabled = (state.api.ghost_count > 1), .color = COLOR_PINKY};
 
   // Initialize Inky
   state.game.ghost[GHOSTTYPE_INKY] =
@@ -2707,7 +2740,7 @@ void api_game_start_internal(void) {
                 .dot_counter = 0,
                 .dot_limit = 30};
   state.gfx.sprite[SPRITE_INKY] =
-      (sprite_t){.enabled = true, .color = COLOR_INKY};
+      (sprite_t){.enabled = (state.api.ghost_count > 2), .color = COLOR_INKY};
 
   // Initialize Clyde
   state.game.ghost[GHOSTTYPE_CLYDE] =
@@ -2724,7 +2757,7 @@ void api_game_start_internal(void) {
                 .dot_counter = 0,
                 .dot_limit = 60};
   state.gfx.sprite[SPRITE_CLYDE] =
-      (sprite_t){.enabled = true, .color = COLOR_CLYDE};
+      (sprite_t){.enabled = (state.api.ghost_count > 3), .color = COLOR_CLYDE};
 
   // Set game state and timers
   state.gamestate = GAMESTATE_GAME;
@@ -2919,6 +2952,14 @@ api_game_state_t api_game_get_state_internal(void) {
 
   // Timing
   result.tick = state.timing.tick;
+
+  // Copy map data (Fix for zero map issue)
+  for (int y = 0; y < API_MAP_HEIGHT; y++) {
+    for (int x = 0; x < API_MAP_WIDTH; x++) {
+      // video_ram stores the tile codes
+      result.map[y][x] = state.gfx.video_ram[y][x];
+    }
+  }
 
   return result;
 }
