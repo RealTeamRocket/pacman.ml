@@ -2761,10 +2761,9 @@ void api_game_start_internal(void) {
 
   // Set game state and timers
   state.gamestate = GAMESTATE_GAME;
-  // In API mode, mark these as already happened (set to tick 0)
-  state.game.started.tick = 0;
-  state.game.ready_started.tick = 0;
-  state.game.round_started.tick = 0;
+  state.game.started.tick = state.timing.tick;
+  state.game.ready_started.tick = state.timing.tick;
+  state.game.round_started.tick = state.timing.tick;
   start(&state.game.force_leave_house);
 
   // Clear fade effect so graphics are immediately visible
@@ -2886,9 +2885,9 @@ void api_game_restart_internal(void) {
 
   // Set game state and timers
   state.gamestate = GAMESTATE_GAME;
-  state.game.started.tick = 0;
-  state.game.ready_started.tick = 0;
-  state.game.round_started.tick = 0;
+  state.game.started.tick = state.timing.tick;
+  state.game.ready_started.tick = state.timing.tick;
+  state.game.round_started.tick = state.timing.tick;
   start(&state.game.force_leave_house);
 
   // Clear fade effect
