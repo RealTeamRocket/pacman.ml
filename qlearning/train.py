@@ -1,143 +1,168 @@
+#!/usr/bin/env python3
+"""
+Junction-based Q-Learning Training
+
+Key difference: Agent only makes decisions at junctions (intersections).
+Between junctions, it continues in the same direction.
+
+This reduces decisions from ~800/episode to ~50-100/episode,
+making each decision more meaningful and learning faster.
+"""
+
 import argparse
 import time
 import os
-import requests
+import json
 from pacman_env import PacmanEnv
 from qlearn import QLearningAgent
-import config
 
-def train(episodes=config.EPISODES, port=8080):
-    print(f"\n{'='*70}")
-    print(f"PACMAN Q-LEARNING TRAINING")
-    print(f"{'='*70}")
+def train(episodes=1000, port=8080):
+    print(f"\n{'='*60}")
+    print(f"JUNCTION-BASED Q-LEARNING")
+    print(f"{'='*60}")
     print(f"Episodes: {episodes}")
-    print(f"Server: http://127.0.0.1:{port}")
-    print(f"Config: Alpha={config.ALPHA}, Gamma={config.GAMMA}, Epsilon={config.EPSILON_START}→{config.EPSILON_MIN}")
-    print(f"{'='*70}\n")
+    print(f"Agent only decides at junctions (intersections)")
+    print(f"{'='*60}\n")
     
     env = PacmanEnv(url=f"http://127.0.0.1:{port}")
-    agent = QLearningAgent(actions=["up", "down", "left", "right"])
+    agent = QLearningAgent(
+        actions=["up", "down", "left", "right"],
+        alpha=0.3,
+        gamma=0.95,
+        epsilon=1.0,
+        epsilon_decay=0.995,
+        epsilon_min=0.03
+    )
     
-    # Load existing Q-table if available
-    if os.path.exists("qtable.pkl"):
-        agent.load("qtable.pkl")
+    qtable_file = "qtable.pkl"
+    if os.path.exists(qtable_file):
+        agent.load(qtable_file)
     
-    # Statistics tracking
-    episode_rewards = []
-    episode_scores = []
-    episode_lengths = []
+    # Stats
+    scores = []
+    rewards = []
+    dots = []
+    decisions_list = []
+    
+    best_score = 0
+    best_ep = 0
     
     try:
-        for episode in range(episodes):
-            state_api = env.reset()
+        for ep in range(1, episodes + 1):
+            state = env.reset()
+            agent.reset_episode()
             
-            if not state_api:
-                print("[ERROR] Failed to get initial state. Is server running?")
+            if not state:
+                print("[ERROR] No state, retrying...")
                 time.sleep(1)
-                state_api = env.reset()
-                if not state_api:
-                    print("[ERROR] Could not connect. Exiting.")
+                state = env.reset()
+                if not state:
                     return
             
-            # Track last action
-            last_action = "none"
-            state_api['last_action'] = last_action
-            state = agent.map_state(state_api)
-            
             total_reward = 0
-            steps = 0
+            step = 0
             done = False
+            init_dots = state.get('status', {}).get('dots_remaining', 244)
             
-            while not done:
-                action = agent.get_action(state)
-                next_state_api, reward, done, _ = env.step(action)
+            # Initial action at starting position
+            action = agent.get_action(state)
+            if agent.is_junction(state):
+                agent.learn_at_junction(state, action, done=False)
+            
+            while not done and step < 3000:
+                next_state, reward, done, _ = env.step(action)
                 
-                if next_state_api is None:
-                    print("[ERROR] Lost connection to server.")
-                    done = True
+                if next_state is None:
                     break
                 
-                next_state_api['last_action'] = action
-                next_state = agent.map_state(next_state_api)
+                # Accumulate reward
+                agent.accumulate_reward(reward)
+                total_reward += reward
+                step += 1
                 
-                agent.learn(state, action, reward, next_state)
+                # Check if we reached a junction
+                if agent.is_junction(next_state) or done:
+                    # Get new action at this junction
+                    new_action = agent.get_action(next_state)
+                    
+                    # Learn from the junction-to-junction transition
+                    agent.learn_at_junction(next_state, new_action, done=done)
+                    
+                    action = new_action
+                else:
+                    # Not a junction - continue with same action
+                    action = agent.get_action(next_state)  # Will return current_direction
                 
                 state = next_state
-                state_api = next_state_api
-                last_action = action
-                total_reward += reward
-                steps += 1
-                
-                # Prevent infinite loops
-                if steps > 1000:
-                    print(f"[WARNING] Episode exceeded 1000 steps, forcing termination")
-                    done = True
             
             agent.decay_epsilon()
             
-            # Store stats
-            final_score = state_api.get('status', {}).get('score', 0) if state_api else 0
-            episode_rewards.append(total_reward)
-            episode_scores.append(final_score)
-            episode_lengths.append(steps)
+            # Stats
+            final_score = state.get('status', {}).get('score', 0) if state else 0
+            final_dots = state.get('status', {}).get('dots_remaining', 244) if state else 244
+            dots_eaten = init_dots - final_dots
             
-            # Print episode summary
-            print(f"Episode {episode+1}/{episodes}: Reward={total_reward:.1f}, Score={final_score}, Steps={steps}, Epsilon={agent.epsilon:.2f}")
+            scores.append(final_score)
+            rewards.append(total_reward)
+            dots.append(dots_eaten)
+            decisions_list.append(agent.decisions_made)
             
-            # Detailed stats every 10 episodes
-            if (episode + 1) % 10 == 0:
-                avg_reward_10 = sum(episode_rewards[-10:]) / 10
-                avg_score_10 = sum(episode_scores[-10:]) / 10
-                avg_length_10 = sum(episode_lengths[-10:]) / 10
-                
-                print(f"\n{'─'*70}")
-                print(f"Episodes {episode-9}-{episode+1} Average:")
-                print(f"  Reward: {avg_reward_10:.1f}")
-                print(f"  Score: {avg_score_10:.1f}")
-                print(f"  Length: {avg_length_10:.1f} steps")
-                print(f"  Epsilon: {agent.epsilon:.3f}")
-                print(f"  States explored: {len(agent.Q)}")
-                print(f"{'─'*70}\n")
+            if final_score > best_score:
+                best_score = final_score
+                best_ep = ep
             
-            # Comprehensive stats every 50 episodes
-            if (episode + 1) % 50 == 0:
+            # Print episode
+            print(f"Ep {ep:4d}: Score={final_score:4d} Dots={dots_eaten:3d} "
+                  f"Steps={step:4d} Decisions={agent.decisions_made:3d} "
+                  f"R={total_reward:7.1f} ε={agent.epsilon:.3f}")
+            
+            # Summary every 50
+            if ep % 50 == 0:
+                n = 50
+                print(f"\n--- Last {n} episodes ---")
+                print(f"Avg Score: {sum(scores[-n:])/n:.1f} (max: {max(scores[-n:])})")
+                print(f"Avg Dots:  {sum(dots[-n:])/n:.1f}")
+                print(f"Avg Decisions: {sum(decisions_list[-n:])/n:.1f}")
+                print(f"States: {len(agent.Q)}")
+                print(f"Best Ever: {best_score} (Ep {best_ep})")
+                print()
+            
+            # Save every 100
+            if ep % 100 == 0:
+                agent.save(qtable_file)
                 agent.print_stats()
-            
-            # Save checkpoint
-            if (episode + 1) % 100 == 0:
-                agent.save("qtable.pkl")
-                
-                # Save training log
-                import json
-                with open('training_log.json', 'w') as f:
-                    json.dump({
-                        'rewards': episode_rewards,
-                        'scores': episode_scores,
-                        'lengths': episode_lengths
-                    }, f, indent=2)
-                print("[SAVE] Training log saved\n")
     
     except KeyboardInterrupt:
-        print("\n[INTERRUPT] Training interrupted by user")
-        agent.save("qtable.pkl")
+        print("\n[INTERRUPTED]")
     
-    # Final summary
-    print(f"\n{'='*70}")
+    agent.save(qtable_file)
+    
+    print(f"\n{'='*60}")
     print(f"TRAINING COMPLETE")
-    print(f"{'='*70}")
-    print(f"Total episodes: {len(episode_rewards)}")
-    print(f"Average reward: {sum(episode_rewards)/len(episode_rewards):.1f}")
-    print(f"Average score: {sum(episode_scores)/len(episode_scores):.1f}")
-    print(f"Best score: {max(episode_scores)}")
-    print(f"States explored: {len(agent.Q)}")
-    print(f"{'='*70}\n")
+    print(f"{'='*60}")
+    print(f"Episodes: {len(scores)}")
+    print(f"Avg Score: {sum(scores)/len(scores):.1f}")
+    print(f"Avg Dots: {sum(dots)/len(dots):.1f}")
+    print(f"Avg Decisions/ep: {sum(decisions_list)/len(decisions_list):.1f}")
+    print(f"Best: {best_score} (Ep {best_ep})")
+    print(f"States: {len(agent.Q)}")
+    print(f"{'='*60}")
     
     agent.print_stats()
+    
+    with open('training.json', 'w') as f:
+        json.dump({
+            'scores': scores,
+            'rewards': rewards,
+            'dots': dots,
+            'decisions': decisions_list,
+            'best_score': best_score
+        }, f)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--episodes", type=int, default=1000)
-    parser.add_argument("--port", type=str, default="8080")
+    parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
     
     train(episodes=args.episodes, port=args.port)
