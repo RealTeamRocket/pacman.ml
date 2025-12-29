@@ -195,7 +195,7 @@
 #define MAX_VERTICES                                                           \
   (((DISPLAY_TILES_X * DISPLAY_TILES_Y) + NUM_SPRITES + NUM_DEBUG_MARKERS) * 6)
 #define FADE_TICKS (30) // duration of fade-in/out
-#define NUM_LIVES (3)
+#define NUM_LIVES (2)   // Number of SPARE lives (displayed), not total lives
 #define NUM_STATUS_FRUITS (7) // max number of displayed fruits at bottom right
 #define NUM_DOTS (244)        // 240 small dots + 4 pills
 #define NUM_PILLS (4)         // number of energizer pills on playfield
@@ -467,6 +467,7 @@ static struct {
 #endif
     char port[16];   // API server port
     int ghost_count; // Number of active ghosts
+    bool round_in_progress; // true when a game round is active (for lives tracking)
   } api;
 
   // intro state
@@ -894,6 +895,7 @@ static void init(void) {
     // Don't auto-start in API mode - wait for /api/start
     state.api.step_ready = false;
     state.api.direction = API_DIR_NONE;
+    state.api.round_in_progress = false;
   } else {
 #endif
 // start into intro screen (normal mode)
@@ -2658,6 +2660,13 @@ static void game_tick(void) {
 // API wrapper functions that have access to internal state
 
 void api_game_start_internal(void) {
+  // If a round is already in progress (restart was just called), don't reset anything
+  // Just ensure the game state is correct for playing
+  if (state.api.round_in_progress) {
+    // Game was already set up by restart, nothing to do
+    return;
+  }
+  
   // Initialize the game immediately, skipping intro animations
   input_enable();
   game_disable_timers();
@@ -2778,11 +2787,121 @@ void api_game_start_internal(void) {
   snd_clear();
 }
 
-void api_game_restart_internal(void) {
-  // Fully reset the game state just like starting fresh
-  // This is essentially the same as api_game_start_internal but resets
-  // score/lives
+// Soft reset: reset positions only, keep score and dots eaten
+static void api_game_soft_reset_internal(void) {
+  // Reset freeze state and timers
+  state.game.freeze = 0;
+  game_disable_timers();
+  
+  // Use global dot counter for ghost house logic after death
+  state.game.global_dot_counter_active = true;
+  state.game.global_dot_counter = 0;
+  
+  // Clear active fruit and ghost eaten count
+  state.game.active_fruit = FRUIT_NONE;
+  state.game.num_ghosts_eaten = 0;
+  
+  // Reset Pacman to starting position
+  state.game.pacman = (pacman_t){
+      .actor =
+          {
+              .dir = DIR_LEFT,
+              .pos = {14 * 8, 26 * 8 + 4},
+          },
+  };
+  state.gfx.sprite[SPRITE_PACMAN] =
+      (sprite_t){.enabled = true, .color = COLOR_PACMAN};
 
+  // Reset Blinky
+  state.game.ghost[GHOSTTYPE_BLINKY] =
+      (ghost_t){.actor =
+                    {
+                        .dir = DIR_LEFT,
+                        .pos = ghost_starting_pos[GHOSTTYPE_BLINKY],
+                    },
+                .type = GHOSTTYPE_BLINKY,
+                .next_dir = DIR_LEFT,
+                .state = GHOSTSTATE_SCATTER,
+                .frightened = disabled_timer(),
+                .eaten = disabled_timer(),
+                .dot_counter = 0,
+                .dot_limit = 0};
+  state.gfx.sprite[SPRITE_BLINKY] =
+      (sprite_t){.enabled = (state.api.ghost_count > 0), .color = COLOR_BLINKY};
+
+  // Reset Pinky
+  state.game.ghost[GHOSTTYPE_PINKY] =
+      (ghost_t){.actor =
+                    {
+                        .dir = DIR_DOWN,
+                        .pos = ghost_starting_pos[GHOSTTYPE_PINKY],
+                    },
+                .type = GHOSTTYPE_PINKY,
+                .next_dir = DIR_DOWN,
+                .state = GHOSTSTATE_HOUSE,
+                .frightened = disabled_timer(),
+                .eaten = disabled_timer(),
+                .dot_counter = 0,
+                .dot_limit = 0};
+  state.gfx.sprite[SPRITE_PINKY] =
+      (sprite_t){.enabled = (state.api.ghost_count > 1), .color = COLOR_PINKY};
+
+  // Reset Inky
+  state.game.ghost[GHOSTTYPE_INKY] =
+      (ghost_t){.actor =
+                    {
+                        .dir = DIR_UP,
+                        .pos = ghost_starting_pos[GHOSTTYPE_INKY],
+                    },
+                .type = GHOSTTYPE_INKY,
+                .next_dir = DIR_UP,
+                .state = GHOSTSTATE_HOUSE,
+                .frightened = disabled_timer(),
+                .eaten = disabled_timer(),
+                .dot_counter = 0,
+                .dot_limit = 30};
+  state.gfx.sprite[SPRITE_INKY] =
+      (sprite_t){.enabled = (state.api.ghost_count > 2), .color = COLOR_INKY};
+
+  // Reset Clyde
+  state.game.ghost[GHOSTTYPE_CLYDE] =
+      (ghost_t){.actor =
+                    {
+                        .dir = DIR_UP,
+                        .pos = ghost_starting_pos[GHOSTTYPE_CLYDE],
+                    },
+                .type = GHOSTTYPE_CLYDE,
+                .next_dir = DIR_UP,
+                .state = GHOSTSTATE_HOUSE,
+                .frightened = disabled_timer(),
+                .eaten = disabled_timer(),
+                .dot_counter = 0,
+                .dot_limit = 60};
+  state.gfx.sprite[SPRITE_CLYDE] =
+      (sprite_t){.enabled = (state.api.ghost_count > 3), .color = COLOR_CLYDE};
+
+  // Ensure game state is set correctly
+  state.gamestate = GAMESTATE_GAME;
+  
+  // Reset timers
+  state.game.ready_started.tick = state.timing.tick;
+  state.game.round_started.tick = state.timing.tick;
+  start(&state.game.force_leave_house);
+
+  // Clear fade effect
+  state.gfx.fade = 0;
+  state.gfx.fadein.tick = DISABLED_TICKS;
+  state.gfx.fadeout.tick = DISABLED_TICKS;
+
+  // Update sprites
+  game_update_sprites();
+
+  // Clear sounds
+  snd_clear();
+}
+
+// Full reset: reset everything including score and dots
+static void api_game_full_reset_internal(void) {
   input_enable();
   game_disable_timers();
   state.game.round = 0; // Start from round 0
@@ -2830,7 +2949,7 @@ void api_game_restart_internal(void) {
                 .dot_counter = 0,
                 .dot_limit = 0};
   state.gfx.sprite[SPRITE_BLINKY] =
-      (sprite_t){.enabled = true, .color = COLOR_BLINKY};
+      (sprite_t){.enabled = (state.api.ghost_count > 0), .color = COLOR_BLINKY};
 
   // Reset Pinky
   state.game.ghost[GHOSTTYPE_PINKY] =
@@ -2847,7 +2966,7 @@ void api_game_restart_internal(void) {
                 .dot_counter = 0,
                 .dot_limit = 0};
   state.gfx.sprite[SPRITE_PINKY] =
-      (sprite_t){.enabled = true, .color = COLOR_PINKY};
+      (sprite_t){.enabled = (state.api.ghost_count > 1), .color = COLOR_PINKY};
 
   // Reset Inky
   state.game.ghost[GHOSTTYPE_INKY] =
@@ -2864,7 +2983,7 @@ void api_game_restart_internal(void) {
                 .dot_counter = 0,
                 .dot_limit = 30};
   state.gfx.sprite[SPRITE_INKY] =
-      (sprite_t){.enabled = true, .color = COLOR_INKY};
+      (sprite_t){.enabled = (state.api.ghost_count > 2), .color = COLOR_INKY};
 
   // Reset Clyde
   state.game.ghost[GHOSTTYPE_CLYDE] =
@@ -2881,7 +3000,7 @@ void api_game_restart_internal(void) {
                 .dot_counter = 0,
                 .dot_limit = 60};
   state.gfx.sprite[SPRITE_CLYDE] =
-      (sprite_t){.enabled = true, .color = COLOR_CLYDE};
+      (sprite_t){.enabled = (state.api.ghost_count > 3), .color = COLOR_CLYDE};
 
   // Set game state and timers
   state.gamestate = GAMESTATE_GAME;
@@ -2900,6 +3019,28 @@ void api_game_restart_internal(void) {
 
   // Clear sounds
   snd_clear();
+}
+
+void api_game_restart_internal(void) {
+  // Check if a game round was in progress (Pacman died)
+  if (state.api.round_in_progress) {
+    // Decrement lives
+    state.game.num_lives--;
+    
+    if (state.game.num_lives >= 0) {
+      // Still have spare lives (2->1->0): soft reset (keep score, keep dots eaten)
+      api_game_soft_reset_internal();
+    } else {
+      // num_lives < 0 means all 3 lives used (2 spare + 1 current): full reset
+      api_game_full_reset_internal();
+    }
+  } else {
+    // First restart of an episode: full reset
+    api_game_full_reset_internal();
+  }
+  
+  // Mark that a round is now in progress
+  state.api.round_in_progress = true;
 }
 
 void api_game_step_internal(api_direction_t direction) {
