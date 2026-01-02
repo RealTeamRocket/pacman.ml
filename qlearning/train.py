@@ -46,9 +46,11 @@ def train(episodes=1000, port=8080):
     dots = []
     decisions_list = []
     deaths_list = []
+    wins_list = []  # Track wins
 
     best_score = 0
     best_ep = 0
+    total_wins = 0
 
     try:
         for ep in range(1, episodes + 1):
@@ -136,13 +138,17 @@ def train(episodes=1000, port=8080):
             dots.append(dots_eaten)
             decisions_list.append(agent.decisions_made)
             deaths_list.append(episode_deaths)
+            wins_list.append(1 if round_won else 0)
+
+            if round_won:
+                total_wins += 1
 
             if final_score > best_score:
                 best_score = final_score
                 best_ep = ep
 
             # Print episode
-            win_marker = "🏆" if round_won else ""
+            win_marker = " 🏆 WIN!" if round_won else ""
             death_markers = "💀" * episode_deaths
             print(f"Ep {ep:4d}: Score={final_score:5d} Dots={dots_eaten:3d} "
                   f"Steps={step:5d} Dec={agent.decisions_made:3d} "
@@ -160,12 +166,15 @@ def train(episodes=1000, port=8080):
                 print(f"\n{'='*60}")
                 print(f"SUMMARY - Last {n} episodes")
                 print(f"{'='*60}")
+                recent_wins = wins_list[-n:]
                 print(f"Avg Score:     {sum(recent_scores)/n:7.1f} (max: {max(recent_scores)})")
                 print(f"Avg Dots:      {sum(recent_dots)/n:7.1f}")
                 print(f"Avg Deaths:    {sum(recent_deaths)/n:7.2f} / 3")
+                print(f"Wins:          {sum(recent_wins)} / {n}")
                 print(f"Avg Decisions: {sum(recent_decisions)/n:7.1f}")
                 print(f"States in Q:   {len(agent.Q)}")
                 print(f"Best Ever:     {best_score} (Ep {best_ep})")
+                print(f"Total Wins:    {total_wins}")
                 print(f"{'='*60}\n")
 
             # Save every 100
@@ -186,6 +195,7 @@ def train(episodes=1000, port=8080):
         print(f"Avg Score:     {sum(scores)/len(scores):.1f}")
         print(f"Avg Dots:      {sum(dots)/len(dots):.1f}")
         print(f"Avg Deaths:    {sum(deaths_list)/len(deaths_list):.2f} / 3")
+        print(f"Total Wins:    {total_wins} ({100*total_wins/len(scores):.1f}%)")
         print(f"Best Score:    {best_score} (Ep {best_ep})")
         print(f"States in Q:   {len(agent.Q)}")
     print(f"{'='*60}")
@@ -199,8 +209,10 @@ def train(episodes=1000, port=8080):
             'dots': dots,
             'decisions': decisions_list,
             'deaths': deaths_list,
+            'wins': wins_list,
             'best_score': best_score,
-            'best_episode': best_ep
+            'best_episode': best_ep,
+            'total_wins': total_wins
         }, f)
 
 

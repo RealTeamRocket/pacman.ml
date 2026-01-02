@@ -110,3 +110,36 @@ take over from there:
 cd pacman.c
 code .
 ```
+
+
+## QLearning after 5000 episodes
+```
+Window          Avg Score   Avg Dots  Max Score   Max Dots
+------------------------------------------------------------
+1-500               699.1       63.0       2160        127
+501-1000            802.6       72.6       2260        165
+1001-1500           825.8       74.0       2050        153
+1501-2000           888.4       77.7       2290        190
+2001-2500           936.8       80.9       3110        212
+2501-3000           981.3       84.0       2620        190
+3001-3500          1114.7       94.0       3500        204
+3501-4000          1147.8       95.3       3380        218
+4001-4500          1271.2      103.1       3420        196
+4501-5000          1238.3      102.0       3420        214
+
+=== BEST PERFORMANCES ===
+Top 10 by dots eaten:
+  Ep 3969: 218 dots, score 3340
+  Ep 4759: 214 dots, score 2500
+  Ep 2385: 212 dots, score 3040
+  Ep 3386: 204 dots, score 2200
+  Ep 4798: 203 dots, score 2690
+  Ep 4943: 202 dots, score 2380
+  Ep 3360: 200 dots, score 2160
+  Ep 3111: 197 dots, score 2330
+  Ep 4735: 197 dots, score 2290
+  Ep 4204: 196 dots, score 2320
+
+Episodes with 200+ dots: 7
+Episodes with 180+ dots: 28
+```

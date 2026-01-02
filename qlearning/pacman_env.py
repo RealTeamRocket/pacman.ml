@@ -54,6 +54,11 @@ class PacmanEnv:
                     self.episode += 1
                     self.deaths_this_episode = 0
                     self.dots_at_episode_start = state.get('status', {}).get('dots_remaining', 244)
+                    # Reset milestone tracking for new episode
+                    self.dots_eaten_total = 0
+                    self.milestone_200_given = False
+                    self.milestone_220_given = False
+                    self.milestone_235_given = False
 
                 self.prev_lives = current_lives
                 self.prev_score = current_score
@@ -88,12 +93,13 @@ class PacmanEnv:
                 state.get('status', {}).get('round_won', False)
             )
 
-            # Bonus for winning the round
+            # Bonus for winning the round - THIS IS THE ULTIMATE GOAL!
             if state.get('status', {}).get('round_won', False):
                 lives_remaining = state.get('status', {}).get('lives', 0)
-                # Big bonus scaled by remaining lives
-                reward += 1000 + (lives_remaining * 500)
-                print(f"[WIN!] Level complete with {lives_remaining} spare lives! Bonus: {1000 + lives_remaining * 500}")
+                # MASSIVE bonus for winning - this is what we want!
+                win_bonus = 2000 + (lives_remaining * 1000)
+                reward += win_bonus
+                print(f"[🏆 WIN! 🏆] Level complete with {lives_remaining} spare lives! Bonus: {win_bonus}")
 
             self.steps += 1
             self.steps_this_life += 1
@@ -203,9 +209,39 @@ class PacmanEnv:
         curr_score = status.get('score', 0)
         score_diff = curr_score - self.prev_score
 
+        # Track total dots eaten this episode
+        dots_remaining = status.get('dots_remaining', 244)
+        self.dots_eaten_total = 244 - dots_remaining
+        
         if score_diff == 10:  # Dot
             reward += 15
             self.dots_this_life += 1
+            
+            # === PROGRESSIVE DOT MILESTONE BONUSES ===
+            # These incentivize the agent to push for more dots
+            
+            if self.dots_eaten_total >= 235 and not self.milestone_235_given:
+                # SO CLOSE to winning! Massive bonus
+                reward += 500
+                self.milestone_235_given = True
+                print(f"[MILESTONE] 235+ dots! Almost there! +500 bonus")
+            elif self.dots_eaten_total >= 220 and not self.milestone_220_given:
+                # Getting very close
+                reward += 200
+                self.milestone_220_given = True
+                print(f"[MILESTONE] 220+ dots! Keep going! +200 bonus")
+            elif self.dots_eaten_total >= 200 and not self.milestone_200_given:
+                # Good progress
+                reward += 100
+                self.milestone_200_given = True
+                print(f"[MILESTONE] 200+ dots! Great progress! +100 bonus")
+            
+            # Extra per-dot bonus in endgame (last 30 dots)
+            if dots_remaining <= 30:
+                reward += 10  # Extra incentive for each dot in endgame
+            elif dots_remaining <= 50:
+                reward += 5   # Moderate extra incentive
+                
         elif score_diff == 50:  # Power pill
             reward += 40
             self.dots_this_life += 1
