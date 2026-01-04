@@ -55,6 +55,13 @@
             cp pacman $out/bin/
           '';
         };
+
+        # Libraries needed for PyTorch/Python ML
+        pythonLibs = with pkgs; [
+          stdenv.cc.cc.lib  # libstdc++
+          zlib              # libz
+        ];
+
       in
       {
         packages = {
@@ -81,8 +88,11 @@
             python3Packages.pip
           ];
 
+          # Libraries for both pacman and Python ML
+          buildInputs = pythonLibs;
+
           shellHook = ''
-            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath pacman.buildInputs}:$LD_LIBRARY_PATH"
+            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath (pacman.buildInputs ++ pythonLibs)}:$LD_LIBRARY_PATH"
           '';
         };
       }

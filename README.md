@@ -24,7 +24,7 @@ git submodule update --init --recursive
 cmake -B build -DPACMAN_ENABLE_API=ON  
 cmake --build build
 
-./build/pacman --api
+./build/pacman --api --ghosts=1
 ```
 
 ## Clone, Build and Run (Linux, macOS, Windows)
@@ -111,6 +111,16 @@ cd pacman.c
 code .
 ```
 
+## Run Python Machine Learning Script
+A simple QLearning based Pacman AI training
+script is included in the `qlearning` subdirectory. It requires poetry for
+dependency management.
+To run the training script:
+
+```
+poetry install
+poetry run python qlearning/train.py --episodes 5000
+```
 
 ## QLearning after 5000 episodes
 ```
@@ -142,4 +152,27 @@ Top 10 by dots eaten:
 
 Episodes with 200+ dots: 7
 Episodes with 180+ dots: 28
+```
+
+
+## Deep QLearning after 5000 episodes
+```
+============================================================
+SUMMARY - Last 50 episodes (Episode 5000)
+============================================================
+Avg Score:      1733.2 (max: 3190)
+Avg Dots:        141.2 (max: 203)
+Avg Deaths:       3.00 / 3
+Avg Reward:     -422.5
+Wins:          0 / 50
+Epsilon:       0.0500
+Buffer Size:   100000
+Total Steps:   14437069
+Best Ever:     5260 (Ep 3879), 236 dots
+Total Wins:    0
+============================================================
+```
+
+```bash
+poetry run python deep-qlearning/analyze_training.py --plot
 ```
