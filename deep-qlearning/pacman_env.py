@@ -104,9 +104,12 @@ class PacmanEnv:
         # Danger features (danger_level, ghost_dir_x, ghost_dir_y, raw_dist) = 4
         # DOT HUNTING features (quadrant_dots x 4, best_quadrant_dir x 2, nearest_dot_dist) = 7
         # ENDGAME features (urgency, direction_to_nearest_dot_x, direction_to_nearest_dot_y) = 3
+        # NEW: Dots reachable per direction (4 directions) = 4
+        # NEW: Best dot path direction (one-hot 4) = 4
+        # NEW: Scattered dot penalty (1) = 1
         
         local_map_size = self.local_view_size * self.local_view_size
-        return 2 + 4 + 20 + local_map_size + 3 + 4 + 4 + 7 + 3
+        return 2 + 4 + 20 + local_map_size + 3 + 4 + 4 + 7 + 3 + 4 + 4 + 1
     
     def reset(self) -> np.ndarray:
         """Reset the environment and return initial state."""
@@ -423,6 +426,41 @@ class PacmanEnv:
             features.append(0.0)
             features.append(0.0)
         
+        # === NEW ENDGAME HUNTING FEATURES ===
+        # Count dots reachable if we go in each direction (up, down, left, right)
+        # This directly answers "which way has more dots to collect?"
+        directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]  # up, down, left, right
+        dots_per_direction = self._count_dots_per_direction(px_tile, py_tile, game_map, directions)
+        
+        # Normalize by remaining dots (so features are 0-1)
+        max_dots = max(dots_per_direction) if dots_per_direction else 1
+        total_dots_reachable = sum(dots_per_direction)
+        for dot_count in dots_per_direction:
+            # Normalize: what fraction of reachable dots are in this direction?
+            if total_dots_reachable > 0:
+                features.append(dot_count / total_dots_reachable)
+            else:
+                features.append(0.25)  # Equal if no dots found
+        
+        # One-hot encoding of best direction to go (most dots reachable)
+        best_dir_idx = dots_per_direction.index(max_dots) if max_dots > 0 else 0
+        for i in range(4):
+            features.append(1.0 if i == best_dir_idx else 0.0)
+        
+        # Scattered dot penalty - how spread out are the remaining dots?
+        # High value = dots are scattered (harder to collect efficiently)
+        # Low value = dots are clustered (easier to collect)
+        if total_dots_reachable > 0:
+            # Calculate how evenly distributed dots are across directions
+            # If perfectly even (0.25, 0.25, 0.25, 0.25), scattered = 1.0
+            # If all in one direction (1, 0, 0, 0), scattered = 0.0
+            evenness = sum((d / total_dots_reachable - 0.25) ** 2 for d in dots_per_direction)
+            # evenness ranges from 0 (perfectly even) to 0.1875 (all in one direction)
+            scattered = 1.0 - (evenness / 0.1875)  # Invert: 0 = clustered, 1 = scattered
+            features.append(scattered)
+        else:
+            features.append(0.5)
+        
         return np.array(features, dtype=np.float32)
     
     def _count_dots_per_quadrant(self, game_map: List) -> List[int]:
@@ -492,7 +530,74 @@ class PacmanEnv:
         
         return max_dist, None
     
-    def _find_nearest_dot_distance(self, px: int, py: int, dx: int, dy: int, 
+    def _count_dots_per_direction(self, px: int, py: int, game_map: List, 
+                                   directions: List[tuple], search_depth: int = 20) -> List[int]:
+        """Count how many dots are reachable if we first step in each direction.
+        
+        This helps the agent decide which direction to go at a junction by showing
+        how many dots can be collected in each direction.
+        
+        Args:
+            px, py: Current position
+            directions: List of (dx, dy) direction tuples to check
+            search_depth: How far to search in each direction
+            
+        Returns:
+            List of dot counts for each direction
+        """
+        from collections import deque
+        
+        if not game_map:
+            return [0] * len(directions)
+        
+        dot_counts = []
+        
+        for dx, dy in directions:
+            # First step in this direction
+            start_x, start_y = px + dx, py + dy
+            
+            # Check if first step is valid
+            if not (0 <= start_y < len(game_map) and 0 <= start_x < len(game_map[0])):
+                dot_counts.append(0)
+                continue
+            
+            tile = game_map[start_y][start_x]
+            if tile not in (64, 16, 20):  # Not passable
+                dot_counts.append(0)
+                continue
+            
+            # BFS from this starting point to count reachable dots
+            visited = {(px, py), (start_x, start_y)}
+            queue = deque([(start_x, start_y, 1)])
+            dots_found = 0
+            
+            # Count dot at starting position
+            if tile in (16, 20):
+                dots_found += 1
+            
+            while queue:
+                x, y, dist = queue.popleft()
+                
+                if dist >= search_depth:
+                    continue
+                
+                # Explore neighbors
+                for ndx, ndy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+                    nx, ny = x + ndx, y + ndy
+                    if (nx, ny) not in visited:
+                        if 0 <= ny < len(game_map) and 0 <= nx < len(game_map[0]):
+                            ntile = game_map[ny][nx]
+                            if ntile in (64, 16, 20):  # Passable
+                                visited.add((nx, ny))
+                                queue.append((nx, ny, dist + 1))
+                                if ntile in (16, 20):  # Dot or power pill
+                                    dots_found += 1
+            
+            dot_counts.append(dots_found)
+        
+        return dot_counts
+    
+    def _find_nearest_dot_distance(self, px: int, py: int, dx: int, dy: int,
                                     game_map: List, max_dist: int = 15) -> float:
         """Find distance to nearest dot in given direction."""
         for dist in range(1, max_dist + 1):
@@ -628,6 +733,39 @@ class PacmanEnv:
                     reward -= 0.3 * urgency  # Moving away from dots (penalize more in endgame)
             
             self.prev_nearest_dot_dist = nearest_dot
+            
+            # === ENDGAME HUNTING REWARD ===
+            # In endgame (< 50 dots), give bonus for moving toward direction with more dots
+            dots_remaining = 244 - self.dots_eaten_total
+            if dots_remaining <= 50 and dots_remaining > 0:
+                # Calculate dots per direction from new position
+                directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]  # up, down, left, right
+                dots_per_dir = self._count_dots_per_direction(pacman_x, pacman_y, game_map, directions, search_depth=15)
+                
+                # Determine which direction we moved
+                if self.last_tile is not None:
+                    move_dx = pacman_x - self.last_tile[0]
+                    move_dy = pacman_y - self.last_tile[1]
+                    
+                    # Map movement to direction index
+                    dir_map = {(0, -1): 0, (0, 1): 1, (-1, 0): 2, (1, 0): 3}
+                    moved_dir = dir_map.get((move_dx, move_dy), -1)
+                    
+                    if moved_dir >= 0 and sum(dots_per_dir) > 0:
+                        # Calculate what fraction of dots are in the direction we moved
+                        total_dots = sum(dots_per_dir)
+                        dots_in_moved_dir = dots_per_dir[moved_dir]
+                        best_dots = max(dots_per_dir)
+                        
+                        # Reward for moving toward more dots
+                        if dots_in_moved_dir == best_dots and best_dots > 0:
+                            # Moved toward the best direction!
+                            endgame_hunt_bonus = 3.0 * (1.0 - dots_remaining / 50.0)  # Stronger as fewer dots
+                            reward += endgame_hunt_bonus
+                        elif dots_in_moved_dir < best_dots * 0.3:
+                            # Moved toward a direction with few dots - mild penalty
+                            endgame_hunt_penalty = -1.0 * (1.0 - dots_remaining / 50.0)
+                            reward += endgame_hunt_penalty
             
             # Update tile history
             self.tile_history.append(current_tile)

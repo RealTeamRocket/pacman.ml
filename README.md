@@ -158,18 +158,27 @@ Episodes with 180+ dots: 28
 ## Deep QLearning after 5000 episodes
 ```
 ============================================================
-SUMMARY - Last 50 episodes (Episode 5000)
+DQN AGENT STATS
 ============================================================
-Avg Score:      1733.2 (max: 3190)
-Avg Dots:        141.2 (max: 203)
-Avg Deaths:       3.00 / 3
-Avg Reward:     -422.5
-Wins:          0 / 50
-Epsilon:       0.0500
-Buffer Size:   100000
-Total Steps:   14437069
-Best Ever:     5260 (Ep 3879), 236 dots
-Total Wins:    0
+Device: cpu
+Epsilon: 0.0500
+Learning Rate: 1.00e-05
+Steps: 2000
+Network Updates: 1554734
+Buffer Size: 100000
+============================================================
+
+
+============================================================
+TRAINING COMPLETE
+============================================================
+Episodes:      2000
+Avg Score:     1981.7
+Avg Dots:      163.5
+Avg Deaths:    2.97 / 3
+Total Wins:    48 (2.4%)
+Best Score:    4490 (Ep 133)
+Best Dots:     244
 ============================================================
 ```
 

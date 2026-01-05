@@ -57,7 +57,7 @@ def train(
 ):
     """
     Train the DQN agent.
-    
+
     Args:
         episodes: Number of episodes to train
         port: Port for Pacman API server
@@ -75,7 +75,7 @@ def train(
         checkpoint_dir: Directory for saving checkpoints
         resume: Whether to resume from checkpoint
     """
-    
+
     print(f"\n{'='*60}")
     print(f"DEEP Q-LEARNING TRAINING")
     print(f"{'='*60}")
@@ -87,15 +87,15 @@ def train(
     print(f"Buffer size: {buffer_size}")
     print(f"Batch size: {batch_size}")
     print(f"{'='*60}\n")
-    
+
     # Create checkpoint directory (default to deep-qlearning/checkpoints)
     if checkpoint_dir is None:
         checkpoint_dir = os.path.join(SCRIPT_DIR, "checkpoints")
     os.makedirs(checkpoint_dir, exist_ok=True)
-    
+
     # Initialize environment
     env = PacmanEnv(url=f"http://127.0.0.1:{port}")
-    
+
     # Initialize agent
     agent = DQNAgent(
         state_dim=env.state_dim,
@@ -112,11 +112,11 @@ def train(
         dueling=True,
         prioritized_replay=False
     )
-    
+
     # Resume from checkpoint if available
     checkpoint_path = os.path.join(checkpoint_dir, "dqn_latest.pt")
     start_episode = 1
-    
+
     if resume and os.path.exists(checkpoint_path):
         agent.load(checkpoint_path)
         # Try to load training state
@@ -126,7 +126,7 @@ def train(
                 training_state = json.load(f)
                 start_episode = training_state.get('episode', 1) + 1
                 print(f"[RESUME] Resuming from episode {start_episode}")
-    
+
     # Statistics tracking
     scores: List[int] = []
     dots_eaten: List[int] = []
@@ -134,22 +134,22 @@ def train(
     wins_list: List[int] = []
     rewards_list: List[float] = []
     losses: List[float] = []
-    
+
     best_score = 0
     best_dots = 0
     best_ep = 0
     total_wins = 0
     total_steps = 0
-    
+
     try:
         for ep in range(start_episode, episodes + 1):
             # Reset environment
             state = env.reset()
-            
+
             # Reset direction tracking for new episode
             env.current_direction = None
             env.last_decision_pos = None
-            
+
             if state is None or np.all(state == 0):
                 print(f"[ERROR] Failed to get initial state, retrying...")
                 time.sleep(1)
@@ -158,81 +158,80 @@ def train(
                 env.last_decision_pos = None
                 if state is None or np.all(state == 0):
                     continue
-            
+
             episode_reward = 0
             episode_steps = 0
             done = False
             junctions_encountered = 0
             auto_moves = 0  # Hallways + corners (no DQN needed)
             fallback_moves = 0  # Times we fell back to DQN (shouldn't happen)
-            
+
             # Debug: verbose output for first few episodes
             debug_verbose = (ep <= 3)
-            
+
             # Track if we made a decision this step (for experience storage)
             made_decision = False
-            
+
             # Track last tile position to detect when we actually move
             last_tile_pos = None
             pending_direction = None  # Direction we chose, to become arrival_direction when we move
-            
+
             # Episode loop - continues across all lives
             while not done and episode_steps < 10000:
                 # Get current game state
                 state_dict = env._get_state()
-                
+
                 # Get current tile position
                 pacman_data = state_dict.get('pacman', {}) if state_dict else {}
                 current_tile = (pacman_data.get('x', 0) // 8, pacman_data.get('y', 0) // 8)
-                
+
                 # Update arrival_direction only when we actually move to a new tile
                 if last_tile_pos is not None and current_tile != last_tile_pos:
                     # We moved! Update arrival_direction to the direction we were going
                     if pending_direction is not None:
                         env.arrival_direction = pending_direction
-                
-                # Debug: show available directions
-                if debug_verbose and episode_steps < 20:
-                    open_dirs = env._get_open_directions(state_dict)
-                    forward_dirs = env._get_forward_directions(open_dirs)
-                    pacman = state_dict.get('pacman', {}) if state_dict else {}
-                    px = pacman.get('x', 0) // 8
-                    py = pacman.get('y', 0) // 8
-                    is_jnct = env.is_junction(state_dict)
-                    is_new = env.is_new_junction(state_dict)
-                    jnct_status = "NEW_JNCT" if is_new else ("WAITING" if is_jnct else "hallway")
-                    # Show which direction is blocked (reverse of arrival)
-                    blocked = env.reverse_dir.get(env.arrival_direction) if env.arrival_direction else None
-                    action_mask = env.get_action_mask(state_dict)
-                    valid_actions = [env.IDX_TO_ACTION[i] for i in range(4) if action_mask[i] > 0]
-                    print(f"  [DEBUG] Step {episode_steps}: pos=({px},{py}) "
-                          f"[{jnct_status}] open={open_dirs} valid={valid_actions} "
-                          f"arrived_from={env.arrival_direction} blocked={blocked}")
-                
+
+
+
                 # Check if at a NEW junction (decision point we haven't decided at yet)
                 # This prevents making multiple decisions at the same position while
                 # waiting for the game to move Pacman
                 at_new_junction = env.is_new_junction(state_dict)
                 made_decision = False
-                
+
                 if at_new_junction:
                     # At a NEW junction - use DQN to make a decision
                     junctions_encountered += 1
                     made_decision = True
-                    
+
                     # Get action mask - reverse direction is always blocked (like real Pacman)
                     action_mask = env.get_action_mask(state_dict)
-                    
-                    action_idx = agent.select_action(state, action_mask=action_mask, training=True)
+
+                    # Calculate dot bias strength - strong enough to prevent bad moves
+                    # like going through the middle where there are no dots
+                    dots_remaining = env.dots_eaten_total
+                    dots_remaining_actual = 244 - dots_remaining if dots_remaining else 244
+                    if dots_remaining_actual <= 30:
+                        dot_bias = 8.0   # Very strong in endgame
+                    elif dots_remaining_actual <= 60:
+                        dot_bias = 6.0   # Strong
+                    elif dots_remaining_actual <= 100:
+                        dot_bias = 5.0   # Moderate-strong
+                    else:
+                        dot_bias = 4.0   # Solid bias early game to avoid middle
+
+                    action_idx = agent.select_action(state, action_mask=action_mask, training=True, dot_bias_strength=dot_bias)
                     action_name = env.IDX_TO_ACTION[action_idx]
-                    
+
+
+
                     # Store this decision for continuing in hallways
                     env.current_direction = action_name
                     env.last_junction_action = action_idx
-                    
+
                     # Mark that we've made a decision at this position
                     env.mark_decision_made(state_dict)
-                    
+
                     # Store the pending direction - will become arrival_direction when we move
                     pending_direction = action_name
                 elif env.is_junction(state_dict):
@@ -243,7 +242,7 @@ def train(
                 else:
                     # In a hallway - continue in the current direction
                     forward_dir = env.get_forward_direction(state_dict)
-                    
+
                     if forward_dir is not None:
                         # Single valid forward direction (hallway or corner) - continue automatically
                         auto_moves += 1
@@ -262,28 +261,28 @@ def train(
                         action_idx = agent.select_action(state, action_mask=action_mask, training=True)
                         action_name = env.IDX_TO_ACTION[action_idx]
                         env.current_direction = action_name
-                
+
                 # Take action (using action index)
                 next_state, reward, life_done, info = env.step(action_idx)
-                
+
                 # Update last_tile_pos for next iteration
                 last_tile_pos = current_tile
-                
+
                 # Store experience only if we made a NEW junction decision
                 # This focuses learning on important decisions, not hallway continuations
                 if made_decision:
                     agent.store_experience(state, action_idx, reward, next_state, life_done)
-                
+
                 # Train
                 if total_steps % train_freq == 0:
                     loss = agent.train_step()
                     if loss is not None:
                         losses.append(loss)
-                
+
                 episode_reward += reward
                 episode_steps += 1
                 total_steps += 1
-                
+
                 # Check if episode is truly over
                 if life_done:
                     if info.get('game_over', False) or info.get('round_won', False):
@@ -301,47 +300,47 @@ def train(
                             break
                 else:
                     state = next_state
-            
+
             # Decay epsilon at end of episode
             agent.decay_epsilon()
-            
+
             # Episode statistics
             final_score = info.get('score', 0)
             final_dots = info.get('dots_eaten', 0)
             final_deaths = info.get('deaths', 3)
             round_won = info.get('round_won', False)
-            
+
             scores.append(final_score)
             dots_eaten.append(final_dots)
             deaths_list.append(final_deaths)
             wins_list.append(1 if round_won else 0)
             rewards_list.append(episode_reward)
-            
+
             if round_won:
                 total_wins += 1
-            
+
             if final_score > best_score:
                 best_score = final_score
                 best_ep = ep
                 # Save best model
                 agent.save(os.path.join(checkpoint_dir, "dqn_best.pt"))
-            
+
             if final_dots > best_dots:
                 best_dots = final_dots
-            
+
             # Print episode summary
-            win_marker = " 🏆 WIN!" if round_won else ""
-            death_markers = "💀" * final_deaths
-            
+            win_marker = "WIN!" if round_won else ""
+            death_markers = "DEATH " * final_deaths
+
             avg_loss = agent.get_average_loss()
-            
+
             auto_pct = 100 * auto_moves / max(1, episode_steps)
             fallback_info = f" Fallback={fallback_moves}" if fallback_moves > 0 else ""
             print(f"Ep {ep:5d}: Score={final_score:5d} Dots={final_dots:3d} "
                   f"Steps={episode_steps:5d} Jnct={junctions_encountered:3d} Auto={auto_pct:4.1f}% Deaths={final_deaths} "
                   f"R={episode_reward:8.1f} ε={agent.epsilon:.3f} "
                   f"Loss={avg_loss:.4f}{fallback_info} {death_markers}{win_marker}")
-            
+
             # Periodic summary
             if ep % 50 == 0:
                 n = min(50, len(scores))
@@ -350,7 +349,12 @@ def train(
                 recent_deaths = deaths_list[-n:]
                 recent_wins = wins_list[-n:]
                 recent_rewards = rewards_list[-n:]
-                
+
+                # Count "close games" - episodes with 200+ and 220+ dots
+                close_games_200 = sum(1 for d in recent_dots if d >= 200)
+                close_games_220 = sum(1 for d in recent_dots if d >= 220)
+                close_games_230 = sum(1 for d in recent_dots if d >= 230)
+
                 print(f"\n{'='*60}")
                 print(f"SUMMARY - Last {n} episodes (Episode {ep})")
                 print(f"{'='*60}")
@@ -359,17 +363,18 @@ def train(
                 print(f"Avg Deaths:    {sum(recent_deaths)/n:7.2f} / 3")
                 print(f"Avg Reward:    {sum(recent_rewards)/n:7.1f}")
                 print(f"Wins:          {sum(recent_wins)} / {n}")
+                print(f"Close Games:   200+:{close_games_200} | 220+:{close_games_220} | 230+:{close_games_230}")
                 print(f"Epsilon:       {agent.epsilon:.4f}")
                 print(f"Buffer Size:   {len(agent.replay_buffer)}")
                 print(f"Total Steps:   {total_steps}")
                 print(f"Best Ever:     {best_score} (Ep {best_ep}), {best_dots} dots")
                 print(f"Total Wins:    {total_wins}")
                 print(f"{'='*60}\n")
-            
+
             # Save checkpoint
             if ep % save_freq == 0:
                 agent.save(checkpoint_path)
-                
+
                 # Save training state
                 training_state = {
                     'episode': ep,
@@ -381,7 +386,7 @@ def train(
                 }
                 with open(os.path.join(checkpoint_dir, "training_state.json"), 'w') as f:
                     json.dump(training_state, f)
-                
+
                 # Save training history
                 history = {
                     'scores': scores,
@@ -396,14 +401,14 @@ def train(
                 }
                 with open(os.path.join(checkpoint_dir, "training_history.json"), 'w') as f:
                     json.dump(history, f)
-    
+
     except KeyboardInterrupt:
         print("\n[INTERRUPTED] Saving checkpoint...")
-    
+
     # Final save
     agent.save(checkpoint_path)
     agent.print_stats()
-    
+
     # Final summary
     print(f"\n{'='*60}")
     print(f"TRAINING COMPLETE")
@@ -417,7 +422,7 @@ def train(
         print(f"Best Score:    {best_score} (Ep {best_ep})")
         print(f"Best Dots:     {best_dots}")
     print(f"{'='*60}")
-    
+
     # Save final history
     history = {
         'scores': scores,
@@ -436,19 +441,19 @@ def train(
 
 def main():
     parser = argparse.ArgumentParser(description="Train Pacman DQN Agent")
-    
+
     # Training parameters
     parser.add_argument("--episodes", type=int, default=5000,
                         help="Number of episodes to train")
     parser.add_argument("--port", type=int, default=8080,
                         help="Port for Pacman API server")
-    
+
     # Network parameters
     parser.add_argument("--hidden-dim", type=int, default=256,
                         help="Hidden layer dimension")
     parser.add_argument("--lr", type=float, default=1e-4,
                         help="Learning rate")
-    
+
     # RL parameters
     parser.add_argument("--gamma", type=float, default=0.99,
                         help="Discount factor")
@@ -458,19 +463,19 @@ def main():
                         help="Minimum exploration rate")
     parser.add_argument("--epsilon-decay", type=float, default=0.995,
                         help="Epsilon decay rate per episode (0.995 reaches 0.1 in ~450 eps)")
-    
+
     # Buffer parameters
     parser.add_argument("--buffer-size", type=int, default=100000,
                         help="Replay buffer size")
     parser.add_argument("--batch-size", type=int, default=64,
                         help="Training batch size")
-    
+
     # Training frequency
     parser.add_argument("--train-freq", type=int, default=4,
                         help="Steps between training updates")
     parser.add_argument("--target-update", type=int, default=500,
                         help="Steps between target network updates")
-    
+
     # Checkpointing
     parser.add_argument("--save-freq", type=int, default=100,
                         help="Episodes between checkpoint saves")
@@ -478,9 +483,9 @@ def main():
                         help="Directory for checkpoints (default: deep-qlearning/checkpoints)")
     parser.add_argument("--no-resume", action="store_true",
                         help="Don't resume from checkpoint")
-    
+
     args = parser.parse_args()
-    
+
     train(
         episodes=args.episodes,
         port=args.port,

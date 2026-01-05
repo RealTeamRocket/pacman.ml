@@ -148,8 +148,8 @@ def train(episodes=1000, port=8080):
                 best_ep = ep
 
             # Print episode
-            win_marker = " 🏆 WIN!" if round_won else ""
-            death_markers = "💀" * episode_deaths
+            win_marker = "WIN!" if round_won else ""
+            death_markers = "DEATH " * episode_deaths
             print(f"Ep {ep:4d}: Score={final_score:5d} Dots={dots_eaten:3d} "
                   f"Steps={step:5d} Dec={agent.decisions_made:3d} "
                   f"Deaths={episode_deaths} R={total_reward:8.1f} ε={agent.epsilon:.3f} "

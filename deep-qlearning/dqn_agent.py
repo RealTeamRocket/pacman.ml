@@ -121,36 +121,69 @@ class DQNAgent:
         self.loss_count = 0
     
     def select_action(self, state: np.ndarray, action_mask: np.ndarray = None, 
-                      training: bool = True) -> int:
+                      training: bool = True, dot_bias_strength: float = 1.0) -> int:
         """
-        Select an action using epsilon-greedy policy.
+        Select an action using epsilon-greedy policy with dot-hunting bias.
         
         Args:
             state: Current state as numpy array
             action_mask: Optional mask of valid actions
             training: If True, use epsilon-greedy; if False, be greedy
+            dot_bias_strength: How much to bias Q-values toward dot-rich directions
+                              (higher = more strongly follow dots)
         
         Returns:
             Selected action index
         """
-        # Epsilon-greedy exploration
+        # Extract dot-per-direction features from state (indices -9 to -5)
+        # These are normalized: what fraction of reachable dots are in each direction
+        dots_per_dir = state[-9:-5]  # [up, down, left, right] normalized
+        
+        # Epsilon-greedy exploration - but bias toward dot-rich directions
         if training and np.random.random() < self.epsilon:
-            # Random action (respecting action mask if provided)
+            # Biased random action: more likely to pick directions with more dots
             if action_mask is not None:
                 valid_actions = np.where(action_mask > 0)[0]
                 if len(valid_actions) > 0:
-                    return np.random.choice(valid_actions)
+                    # Weight by dot density - STRONGLY prefer directions with dots
+                    dot_weights = np.array([dots_per_dir[a] for a in valid_actions])
+                    # Square the weights to make differences more pronounced
+                    dot_weights = dot_weights ** 2
+                    # Add tiny constant to avoid zero weights, but keep near-zero for no-dot dirs
+                    dot_weights = dot_weights + 0.01
+                    # Normalize to probabilities
+                    probs = dot_weights / dot_weights.sum()
+                    return np.random.choice(valid_actions, p=probs)
             return np.random.randint(self.action_dim)
         
-        # Greedy action from network
+        # Greedy action from network with dot bias
         state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
         
-        if action_mask is not None:
-            mask_tensor = torch.tensor(action_mask, dtype=torch.float32).to(self.device)
-        else:
-            mask_tensor = None
-        
-        return self.online_net.get_action(state_tensor, mask_tensor)
+        with torch.no_grad():
+            q_values = self.online_net(state_tensor).squeeze(0)  # [4]
+            
+            # Add dot bias to Q-values: boost directions with more dots
+            # AND penalize directions with NO dots (like going to the middle)
+            dot_bias = torch.tensor(dots_per_dir, dtype=torch.float32).to(self.device)
+            
+            # Strong penalty for zero-dot directions (e.g., going to middle at start)
+            # If a direction has 0% of dots, it gets a -10 penalty
+            zero_dot_penalty = torch.where(
+                dot_bias < 0.01,  # If less than 1% of dots in this direction
+                torch.tensor(-10.0, device=self.device),  # Strong penalty
+                torch.tensor(0.0, device=self.device)
+            )
+            
+            # Apply positive bias for dot-rich directions AND penalty for empty directions
+            q_values = q_values + dot_bias * dot_bias_strength + zero_dot_penalty
+            
+            # Apply action mask
+            if action_mask is not None:
+                mask_tensor = torch.tensor(action_mask, dtype=torch.float32).to(self.device)
+                # Set invalid actions to very negative value
+                q_values = q_values + (mask_tensor - 1) * 1e9
+            
+            return q_values.argmax().item()
     
     def store_experience(self, state: np.ndarray, action: int, reward: float,
                         next_state: np.ndarray, done: bool):
