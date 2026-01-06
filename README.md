@@ -183,5 +183,5 @@ Best Dots:     244
 ```
 
 ```bash
-poetry run python deep-qlearning/analyze_training.py --plot
+poetry run python deep-qlearning/analyze_training.py 
 ```
