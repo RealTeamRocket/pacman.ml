@@ -1,0 +1,368 @@
+<!--
+  PACMAN REINFORCEMENT LEARNING - PRÄSENTATION
+  Öffne index.html direkt im Browser (Offline-fähig).
+  Navigation: ← / → Pfeiltasten oder Leertaste für nächste Folie
+-->
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1920, height=1080">
+    <title>Pacman Reinforcement Learning - HFT Stuttgart</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="presentation">
+        <section class="slide" id="slide-1">
+            <div class="slide-content title-slide">
+                <div class="title-container">
+                    <div class="pacman-icon">
+                        <div class="pacman-shape"></div>
+                        <div class="dot dot-1"></div>
+                        <div class="dot dot-2"></div>
+                        <div class="dot dot-3"></div>
+                    </div>
+                    <h1>Pacman Machine Learning</h1>
+                    <h2>Reinforcement Learning mit Q-Learning und Deep Q-Networks</h2>
+                    <div class="title-divider"></div>
+                    <div class="title-meta">
+                        <p class="institution">Hochschule für Technik Stuttgart</p>
+                        <p class="module">Modul: Künstliche Intelligenz</p>
+                        <p class="semester">Wintersemester 2025/26</p>
+                    </div>
+                    <div class="authors">
+                        <p>Gruppenarbeit</p>
+                        <p class="author-names">[Teammitglieder]</p>
+                    </div>
+                </div>
+            </div>
+            <footer class="slide-footer">
+                <span class="footer-title">Pacman Reinforcement Learning</span>
+                <span class="footer-institution">HFT Stuttgart</span>
+                <span class="footer-number">1 / 8</span>
+            </footer>
+        </section>
+        <section class="slide" id="slide-2">
+            <div class="slide-content">
+                <h1>Aufgabenstellung und Motivation</h1>
+                <div class="two-column">
+                    <div class="column">
+                        <h3>Projektaufgabe</h3>
+                        <ul>
+                            <li><strong>Themenbereich:</strong> Reinforcement Learning</li>
+                            <li>Entwicklung lernender Agenten für Spiele</li>
+                            <li>Umgebungsanalyse durch Belohnungssystem</li>
+                            <li>Autonome Entscheidungsfindung</li>
+                        </ul>
+                    </div>
+                    <div class="column">
+                        <h3>Warum Pacman?</h3>
+                        <ul>
+                            <li>Klassisches Testbed für Game AI</li>
+                            <li>Klar definierte Regeln und Ziele</li>
+                            <li>Echtzeit-Entscheidungen erforderlich</li>
+                            <li>Komplexe Gegner-Dynamik (Geister)</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="highlight-box">
+                    <div class="highlight-icon">🎯</div>
+                    <div class="highlight-content">
+                        <strong>Ziel:</strong> Ein Agent, der durch Erfahrung lernt, möglichst viele Punkte zu sammeln und das Level zu gewinnen.
+                    </div>
+                </div>
+            </div>
+            <footer class="slide-footer">
+                <span class="footer-title">Pacman Reinforcement Learning</span>
+                <span class="footer-institution">HFT Stuttgart</span>
+                <span class="footer-number">2 / 8</span>
+            </footer>
+        </section>
+        <section class="slide" id="slide-3">
+            <div class="slide-content">
+                <h1>Lösungsansatz</h1>
+                <div class="approach-grid">
+                    <div class="approach-card">
+                        <div class="card-icon">🎮</div>
+                        <h3>Pacman in C</h3>
+                        <p>Fork von pacman.c mit HTTP-API für externe Steuerung</p>
+                    </div>
+                    <div class="approach-card">
+                        <div class="card-icon">🐍</div>
+                        <h3>Python ML-Framework</h3>
+                        <p>Agenten kommunizieren via HTTP mit dem Spiel</p>
+                    </div>
+                    <div class="approach-card">
+                        <div class="card-icon">📊</div>
+                        <h3>Q-Learning</h3>
+                        <p>Tabellenbasiertes RL mit Junction-Entscheidungen</p>
+                    </div>
+                    <div class="approach-card">
+                        <div class="card-icon">🧠</div>
+                        <h3>Deep Q-Network</h3>
+                        <p>Neuronales Netz mit Dueling-Architektur</p>
+                    </div>
+                </div>
+                <div class="tech-stack">
+                    <span class="tech-badge">C99</span>
+                    <span class="tech-badge">Python</span>
+                    <span class="tech-badge">PyTorch</span>
+                    <span class="tech-badge">HTTP-API</span>
+                    <span class="tech-badge">Poetry</span>
+                </div>
+            </div>
+            <footer class="slide-footer">
+                <span class="footer-title">Pacman Reinforcement Learning</span>
+                <span class="footer-institution">HFT Stuttgart</span>
+                <span class="footer-number">3 / 8</span>
+            </footer>
+        </section>
+        <section class="slide" id="slide-4">
+            <div class="slide-content">
+                <h1>Architektur und RL-Pipeline</h1>
+                <div class="pipeline-diagram">
+                    <div class="pipeline-row">
+                        <div class="pipeline-box state-box">
+                            <div class="box-label">Zustand</div>
+                            <div class="box-content">
+                                <span>Position</span>
+                                <span>Geister</span>
+                                <span>Dots</span>
+                            </div>
+                        </div>
+                        <div class="pipeline-arrow">→</div>
+                        <div class="pipeline-box agent-box">
+                            <div class="box-label">Agent</div>
+                            <div class="box-content">
+                                <span>Q-Table</span>
+                                <span class="or-divider">oder</span>
+                                <span>DQN</span>
+                            </div>
+                        </div>
+                        <div class="pipeline-arrow">→</div>
+                        <div class="pipeline-box action-box">
+                            <div class="box-label">Aktion</div>
+                            <div class="box-content">
+                                <span>↑ ↓ ← →</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="pipeline-feedback">
+                        <div class="pipeline-box env-box">
+                            <div class="box-label">Environment</div>
+                            <div class="box-content">
+                                <span>Pacman.c</span>
+                            </div>
+                        </div>
+                        <div class="pipeline-arrow-up">↑</div>
+                        <div class="pipeline-box reward-box">
+                            <div class="box-label">Reward</div>
+                            <div class="box-content">
+                                <span>+15 Dot</span>
+                                <span>-200 Tod</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="arch-note">
+                    <strong>Trainingsschleife:</strong> Agent erhält Zustand → wählt Aktion → erhält Reward → aktualisiert Policy
+                </div>
+            </div>
+            <footer class="slide-footer">
+                <span class="footer-title">Pacman Reinforcement Learning</span>
+                <span class="footer-institution">HFT Stuttgart</span>
+                <span class="footer-number">4 / 8</span>
+            </footer>
+        </section>
+        <section class="slide" id="slide-5">
+            <div class="slide-content">
+                <h1>Training und Reward Design</h1>
+                <div class="three-column">
+                    <div class="column-card">
+                        <h3>State-Repräsentation</h3>
+                        <ul>
+                            <li>Positions-Zone (16 Zonen)</li>
+                            <li>Verfügbare Ausgänge</li>
+                            <li>Geister-Distanz und Richtung</li>
+                            <li>Nächste Food-Richtung</li>
+                            <li>Power-Modus aktiv?</li>
+                        </ul>
+                    </div>
+                    <div class="column-card">
+                        <h3>Reward-Signale</h3>
+                        <ul>
+                            <li><span class="reward-pos">+15</span> pro Dot</li>
+                            <li><span class="reward-pos">+40</span> Power-Pill</li>
+                            <li><span class="reward-pos">+100-1700</span> Geist</li>
+                            <li><span class="reward-neg">-10 bis -200</span> Tod</li>
+                            <li><span class="reward-pos">+2000</span> Level gewonnen</li>
+                        </ul>
+                    </div>
+                    <div class="column-card">
+                        <h3>Besonderheiten</h3>
+                        <ul>
+                            <li>3-Leben-System pro Episode</li>
+                            <li>Survival-basierte Penalty</li>
+                            <li>Progressive Dot-Milestones</li>
+                            <li>Junction-basierte Entscheidungen</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="formula-box">
+                    <strong>Q-Update:</strong> Q(s,a) ← Q(s,a) + α · [r + γ · max Q(s',a') - Q(s,a)]
+                </div>
+            </div>
+            <footer class="slide-footer">
+                <span class="footer-title">Pacman Reinforcement Learning</span>
+                <span class="footer-institution">HFT Stuttgart</span>
+                <span class="footer-number">5 / 8</span>
+            </footer>
+        </section>
+        <section class="slide" id="slide-6">
+            <div class="slide-content">
+                <h1>Ergebnisse und Beobachtungen</h1>
+                <div class="results-comparison">
+                    <div class="result-card qlearn-result">
+                        <h3>Q-Learning (5000 Episoden)</h3>
+                        <table class="result-table">
+                            <tr><td>Durchschn. Score:</td><td><strong>699 → 1238</strong></td></tr>
+                            <tr><td>Durchschn. Dots:</td><td><strong>63 → 102</strong></td></tr>
+                            <tr><td>Max. Score:</td><td><strong>3500</strong></td></tr>
+                            <tr><td>Max. Dots:</td><td><strong>218 / 244</strong></td></tr>
+                            <tr><td>200+ Dots:</td><td><strong>7 Episoden</strong></td></tr>
+                        </table>
+                    </div>
+                    <div class="result-card dqn-result">
+                        <h3>Deep Q-Network (2000 Ep.)</h3>
+                        <table class="result-table">
+                            <tr><td>Durchschn. Score:</td><td><strong>1981.7</strong></td></tr>
+                            <tr><td>Durchschn. Dots:</td><td><strong>163.5</strong></td></tr>
+                            <tr><td>Best Score:</td><td><strong>4490</strong></td></tr>
+                            <tr><td>Best Dots:</td><td><strong>244 (komplett!)</strong></td></tr>
+                            <tr><td>Gewonnene Runden:</td><td><strong>48 (2.4%)</strong></td></tr>
+                        </table>
+                    </div>
+                </div>
+                <div class="observation-box">
+                    <strong>Kernbeobachtung:</strong> DQN übertrifft Q-Learning deutlich - generalisiert besser über den Zustandsraum.
+                </div>
+            </div>
+            <footer class="slide-footer">
+                <span class="footer-title">Pacman Reinforcement Learning</span>
+                <span class="footer-institution">HFT Stuttgart</span>
+                <span class="footer-number">6 / 8</span>
+            </footer>
+        </section>
+        <section class="slide" id="slide-7">
+            <div class="slide-content">
+                <h1>Demo: Trainierte Agenten</h1>
+                <div class="demo-container">
+                    <div class="demo-item">
+                        <h3>Q-Learning Agent</h3>
+                        <div class="gif-container">
+                            <img src="assets/qlearning-demo.gif" alt="Q-Learning Agent Demo">
+                        </div>
+                        <p class="demo-caption">Tabellenbasierte Strategie</p>
+                    </div>
+                    <div class="demo-item">
+                        <h3>Deep Q-Network Agent</h3>
+                        <div class="gif-container">
+                            <img src="assets/dqn-demo.gif" alt="DQN Agent Demo">
+                        </div>
+                        <p class="demo-caption">Neuronales Netz mit Dueling-Architektur</p>
+                    </div>
+                </div>
+                <div class="demo-legend">
+                    <span class="legend-item"><span class="legend-dot yellow"></span> Pacman (Agent)</span>
+                    <span class="legend-item"><span class="legend-dot white"></span> Dots (Ziel)</span>
+                    <span class="legend-item"><span class="legend-dot red"></span> Geister (Gefahr)</span>
+                </div>
+            </div>
+            <footer class="slide-footer">
+                <span class="footer-title">Pacman Reinforcement Learning</span>
+                <span class="footer-institution">HFT Stuttgart</span>
+                <span class="footer-number">7 / 8</span>
+            </footer>
+        </section>
+        <section class="slide" id="slide-8">
+            <div class="slide-content">
+                <h1>Fazit und Ausblick</h1>
+                <div class="two-column">
+                    <div class="column">
+                        <h3>✓ Erkenntnisse</h3>
+                        <ul>
+                            <li>RL funktioniert für Echtzeit-Spiele</li>
+                            <li>Reward-Shaping ist entscheidend</li>
+                            <li>DQN skaliert besser als Q-Tables</li>
+                            <li>Junction-Entscheidungen reduzieren Komplexität</li>
+                        </ul>
+                        <h3 class="margin-top">⚠ Limitationen</h3>
+                        <ul>
+                            <li>Lange Trainingszeiten erforderlich</li>
+                            <li>Hyperparameter-Tuning aufwändig</li>
+                            <li>Deterministisches Geisterverhalten</li>
+                        </ul>
+                    </div>
+                    <div class="column">
+                        <h3>→ Nächste Schritte</h3>
+                        <ul>
+                            <li>Mehr Trainings-Episoden</li>
+                            <li>Prioritized Experience Replay</li>
+                            <li>Multi-Ghost-Szenarien</li>
+                            <li>Transfer auf andere Level</li>
+                            <li>A3C / PPO Algorithmen testen</li>
+                        </ul>
+                        <div class="final-note">
+                            <div class="note-icon">💡</div>
+                            <p>Projekt zeigt praxisnah, wie RL-Agenten komplexe Umgebungen meistern können.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <footer class="slide-footer">
+                <span class="footer-title">Pacman Reinforcement Learning</span>
+                <span class="footer-institution">HFT Stuttgart</span>
+                <span class="footer-number">8 / 8</span>
+            </footer>
+        </section>
+    </div>
+    <div class="nav-hint">← / → zum Navigieren</div>
+    <div class="slide-counter">
+        <span id="current-slide">1</span> / <span id="total-slides">8</span>
+    </div>
+    <script>
+        (function() {
+            var slides = document.querySelectorAll(".slide");
+            var totalSlides = slides.length;
+            var currentSlide = 0;
+            document.getElementById("total-slides").textContent = totalSlides;
+            function showSlide(index) {
+                if (index < 0) index = 0;
+                if (index >= totalSlides) index = totalSlides - 1;
+                for (var i = 0; i < slides.length; i++) {
+                    slides[i].classList.remove("active", "prev", "next");
+                    if (i === index) slides[i].classList.add("active");
+                    else if (i < index) slides[i].classList.add("prev");
+                    else slides[i].classList.add("next");
+                }
+                currentSlide = index;
+                document.getElementById("current-slide").textContent = currentSlide + 1;
+            }
+            function nextSlide() { showSlide(currentSlide + 1); }
+            function prevSlide() { showSlide(currentSlide - 1); }
+            document.addEventListener("keydown", function(e) {
+                switch(e.key) {
+                    case "ArrowRight": case " ": case "PageDown":
+                        e.preventDefault(); nextSlide(); break;
+                    case "ArrowLeft": case "PageUp":
+                        e.preventDefault(); prevSlide(); break;
+                    case "Home": e.preventDefault(); showSlide(0); break;
+                    case "End": e.preventDefault(); showSlide(totalSlides - 1); break;
+                }
+            });
+            showSlide(0);
+            setTimeout(function() { document.querySelector(".nav-hint").style.opacity = "0"; }, 5000);
+        })();
+    </script>
+</body>
+</html>
