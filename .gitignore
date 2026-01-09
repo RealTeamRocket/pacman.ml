@@ -9,3 +9,4 @@ result/
 # python
 __pycache__/
 .env
+.mp4
